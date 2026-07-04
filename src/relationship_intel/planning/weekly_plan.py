@@ -13,21 +13,21 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 
+from relationship_intel.extraction.schemas import PROSPECT_LEAD_TYPES
 from relationship_intel.obsidian.links import slugify, transcript_note_name, wikilink
 from relationship_intel.planning.message_drafts import draft_for
 from relationship_intel.store.repository import Repository
-from relationship_intel.util.dates import week_label
+from relationship_intel.util.dates import parse_iso_date, week_label
 
 _URGENCY_RANK = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
 _DUE_WINDOW_DAYS = {"immediate": 1, "this_week": 7, "two_weeks": 14}
 _CADENCE_DAYS = {"weekly": 7, "biweekly": 14, "monthly": 30}
-PROSPECT_TYPES = ("warm", "active", "cold")
 
 
 def _days_since(week_start: date, last_interaction: str | None) -> int | None:
     if not last_interaction:
         return None
-    return (week_start - date.fromisoformat(last_interaction)).days
+    return (week_start - parse_iso_date(last_interaction)).days
 
 
 def build_plan(
@@ -72,7 +72,9 @@ def build_plan(
             and days is not None
             and days > due_days
         )
-        stalled = lead_type in PROSPECT_TYPES and days is not None and days >= stall_threshold_days
+        stalled = (
+            lead_type in PROSPECT_LEAD_TYPES and days is not None and days >= stall_threshold_days
+        )
         cadence_days = _CADENCE_DAYS.get(profile.get("recommended_cadence") or "", 30)
 
         evidence = profile.get("evidence_snippets") or rec.evidence

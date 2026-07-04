@@ -14,6 +14,7 @@ from typing import Protocol
 
 import yaml
 
+from relationship_intel.util.dates import parse_iso_date
 from relationship_intel.util.hashing import content_hash
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ def _parse_date(value) -> date | None:
         return value
     if isinstance(value, str):
         try:
-            return date.fromisoformat(value.strip())
+            return parse_iso_date(value.strip())
         except ValueError:
             return None
     return None

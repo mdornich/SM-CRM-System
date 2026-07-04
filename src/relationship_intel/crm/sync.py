@@ -6,19 +6,19 @@ plus the vault link — evidence snippets never pass into a CRM note."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 
-from relationship_intel.crm.base import CRMAdapter, NotePayload, TaskPayload
+from relationship_intel.crm.base import CRMAdapter, CRMRef, NotePayload, TaskPayload
 from relationship_intel.obsidian.links import slugify
 from relationship_intel.store.repository import Repository
+from relationship_intel.util.hashing import short_hash
 
 logger = logging.getLogger(__name__)
 
 
 def _payload_hash(payload: dict) -> str:
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+    return short_hash(json.dumps(payload, sort_keys=True))
 
 
 def _sync_object(repo, adapter, object_type: str, local_id: int, payload: dict, create):
@@ -82,8 +82,6 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
                 ),
             )
             ref_row = repo.get_sync_state(adapter.provider, "person", person.id)
-            from relationship_intel.crm.base import CRMRef
-
             person_ref = CRMRef(adapter.provider, "person", ref_row["crm_id"], ref_row["url"])
             adapter.attach_note(person_ref, note)
             stats["notes"] += 1

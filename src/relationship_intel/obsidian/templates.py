@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 
+from relationship_intel.extraction.schemas import PROSPECT_LEAD_TYPES
 from relationship_intel.obsidian.links import slugify, transcript_note_name, wikilink
 from relationship_intel.store.models import CompanyRecord, OpportunityRecord, PersonRecord
 from relationship_intel.util.markdown import bullets, section
@@ -39,7 +40,7 @@ def transcript_note(raw, eri, store_raw: bool) -> tuple[str, list[tuple[str, obj
         [
             wikilink(slugify(f"{p.company_name or p.person_name} succession"))
             for p in eri.lead_profiles
-            if p.lead_type.value in ("warm", "active", "cold")
+            if p.lead_type in PROSPECT_LEAD_TYPES
         ]
     )
     raw_body = (

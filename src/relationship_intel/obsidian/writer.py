@@ -21,12 +21,12 @@ Rules enforced here:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from relationship_intel.util.hashing import short_hash
 from relationship_intel.util.markdown import frontmatter_block
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ _FM_RE = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
 
 
 def managed_hash(managed: str) -> str:
-    return hashlib.sha256(managed.encode("utf-8")).hexdigest()[:16]
+    return short_hash(managed)
 
 
 class VaultWriter:

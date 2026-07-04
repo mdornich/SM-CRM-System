@@ -12,7 +12,10 @@ from relationship_intel.crm.base import CRMAdapter
 from relationship_intel.crm.mock_adapter import MockCRMAdapter
 from relationship_intel.crm.sync import sync_to_crm
 from relationship_intel.extraction.extractor import Extractor
-from relationship_intel.extraction.schemas import ExtractedRelationshipIntelligence
+from relationship_intel.extraction.schemas import (
+    PROSPECT_LEAD_TYPES,
+    ExtractedRelationshipIntelligence,
+)
 from relationship_intel.intake.local_folder import LocalFolderSource
 from relationship_intel.obsidian import templates
 from relationship_intel.obsidian.writer import VaultWriter
@@ -110,7 +113,7 @@ def _persist(
                 eri.lens_version,
                 eri.llm_provider,
             )
-            if profile.lead_type.value in weekly_plan.PROSPECT_TYPES:
+            if profile.lead_type in PROSPECT_LEAD_TYPES:
                 anchor = profile.company_name or person.name
                 repo.upsert_opportunity(
                     f"{anchor} — Succession",

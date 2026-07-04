@@ -20,6 +20,12 @@ class LeadType(StrEnum):
     unknown = "unknown"
 
 
+# Lead types that count as an active prospect (create opportunities, enter the
+# pipeline). Single source — weekly_plan, pipeline, and templates all import this.
+# StrEnum members equal their string values, so post-model_dump dicts compare too.
+PROSPECT_LEAD_TYPES = frozenset({LeadType.cold, LeadType.warm, LeadType.active})
+
+
 class Stage(StrEnum):
     new = "new"
     nurture = "nurture"

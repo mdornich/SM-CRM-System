@@ -13,3 +13,9 @@ def normalize_text(text: str) -> str:
 
 def content_hash(text: str) -> str:
     return hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
+
+
+def short_hash(text: str) -> str:
+    """16-char digest of the EXACT text (no normalization) — for change detection,
+    not identity. Callers serialize (e.g. sorted-key JSON) before passing in."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
