@@ -177,7 +177,7 @@ Use:
 - SQLite for internal canonical store
 - Markdown files for Obsidian output
 - pytest for tests
-- requests/httpx for APIs
+- httpx for APIs (requests is banned in this repo)
 - python-dotenv for env vars
 - optional Typer or argparse for CLI
 

@@ -52,6 +52,23 @@ def test_crm_notes_contain_summaries_never_evidence(settings, samples_dir):
         assert "relationship-intelligence/people/" in note["body"]  # vault link back
 
 
+def test_create_task_updates_in_place_on_same_title_redelivery(tmp_path):
+    from relationship_intel.crm.base import CRMRef, TaskPayload
+
+    adapter = MockCRMAdapter(tmp_path / "crm")
+    ref = CRMRef("mock", "person", "p-1")
+    first = adapter.create_task(
+        ref, TaskPayload(title="Call Bob", body="v1", due_window="this_week")
+    )
+    second = adapter.create_task(
+        ref, TaskPayload(title="Call Bob", body="v2", due_window="two_weeks")
+    )
+    assert first == second
+    tasks = json.loads((tmp_path / "crm" / "tasks.json").read_text())
+    (task,) = tasks.values()
+    assert task["body"] == "v2" and task["due_window"] == "two_weeks"
+
+
 def test_failed_note_attach_is_retried_on_next_sync(settings, samples_dir):
     """Note/task delivery is tracked independently of person sync state — a
     failure after the person record lands must not be skipped forever."""

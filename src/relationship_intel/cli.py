@@ -72,7 +72,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"CRM sync complete: {stats}")
 
         elif args.command == "weekly-plan":
-            week_start = parse_iso_date(args.week_start) if args.week_start else None
+            try:
+                week_start = parse_iso_date(args.week_start) if args.week_start else None
+            except ValueError:
+                print(
+                    f"Invalid --week-start {args.week_start!r}; expected YYYY-MM-DD",
+                    file=sys.stderr,
+                )
+                return 2
             plan = pipeline.run_weekly_plan(settings, args.owner, week_start, args.vault)
             print(
                 f"Weekly plan generated for {plan['owner']}, week of {plan['week_start']} "

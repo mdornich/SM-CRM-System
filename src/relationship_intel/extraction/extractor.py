@@ -31,9 +31,9 @@ class Extractor:
             "attendees": raw.attendees,
             "transcript_hash": raw.transcript_hash,
         }
-        user = (
-            f"<metadata>{json.dumps(meta)}</metadata>\n<transcript>\n{raw.raw_text}\n</transcript>"
-        )
+        # JSON payload, not tag delimiters — a transcript quoting literal
+        # </transcript> text must never truncate what the client sees.
+        user = json.dumps({"metadata": meta, "transcript": raw.raw_text})
         result = self.client.complete(
             system=lens.EXTRACTION_PROMPT + "\n" + "\n".join(f"- {r}" for r in lens.RULES),
             user=user,

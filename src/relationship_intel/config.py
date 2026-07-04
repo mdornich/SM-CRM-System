@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from relationship_intel.errors import NotConfiguredError
+
 
 def _bool(value: str | None, default: bool) -> bool:
     if value is None or value.strip() == "":
@@ -38,6 +40,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     else:
         load_dotenv()
     env = os.environ
+    raw_stall = env.get("STALL_THRESHOLD_DAYS") or 21
+    try:
+        stall_threshold_days = int(raw_stall)
+    except ValueError as exc:
+        raise NotConfiguredError(
+            f"STALL_THRESHOLD_DAYS must be an integer, got {raw_stall!r}"
+        ) from exc
     return Settings(
         llm_provider=env.get("LLM_PROVIDER", "mock").strip() or "mock",
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", ""),
@@ -50,7 +59,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         twenty_api_key=env.get("TWENTY_API_KEY", ""),
         granola_api_key=env.get("GRANOLA_API_KEY", ""),
         default_owner=env.get("DEFAULT_OWNER", "James").strip() or "James",
-        stall_threshold_days=int(env.get("STALL_THRESHOLD_DAYS") or 21),
+        stall_threshold_days=stall_threshold_days,
         db_path=Path(env.get("RI_DB_PATH") or "./output/relationship_intel.db"),
         mock_crm_path=Path(env.get("RI_MOCK_CRM_PATH") or "./output/mock_crm"),
     )

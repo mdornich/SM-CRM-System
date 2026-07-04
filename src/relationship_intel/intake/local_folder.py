@@ -81,7 +81,13 @@ class LocalFolderSource:
         for path in sorted(self.folder.glob("*")):
             if path.suffix.lower() not in (".md", ".txt") or not path.is_file():
                 continue
-            text = path.read_text(encoding="utf-8")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                # Filename is logged here (no hash exists yet) — the operator
+                # must be able to find and fix the bad file.
+                logger.warning("Skipping unreadable transcript file %s", path.name)
+                continue
             meta, body = _split_frontmatter(text)
 
             meeting_date = _parse_date(meta.get("date"))
@@ -108,6 +114,8 @@ class LocalFolderSource:
                 attendees=[str(a) for a in attendees],
                 source_path=path,
             )
-            logger.info("Loaded transcript %s (hash=%s)", path.name, t.transcript_hash[:12])
+            # Hash-only on the happy path — filenames commonly embed person
+            # names, and the logging contract is hash-only for transcript data.
+            logger.info("Loaded transcript hash=%s (%d chars)", t.transcript_hash[:12], len(body))
             transcripts.append(t)
         return transcripts

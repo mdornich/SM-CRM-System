@@ -7,11 +7,16 @@ from __future__ import annotations
 
 import json
 
-from relationship_intel.obsidian.links import slugify, transcript_note_name, wikilink
+from relationship_intel.obsidian.links import transcript_note_name, wikilink
 from relationship_intel.store.models import CompanyRecord, OpportunityRecord, PersonRecord
 from relationship_intel.util.markdown import bullets, section
 
 GENERATED_BY = "relationship-intel"
+
+
+def _link_or_name(slug_map: dict[str, str], name: str) -> str:
+    slug = slug_map.get(name)
+    return wikilink(slug, name) if slug else name
 
 
 def _base_frontmatter(note_type: str, llm_provider: str) -> list[tuple[str, object]]:
@@ -43,12 +48,10 @@ def transcript_note(
         ("transcript_hash", raw.transcript_hash),
         ("processed", True),
     ]
-    people_links = bullets(
-        [wikilink(person_slugs.get(p.name, slugify(p.name)), p.name) for p in eri.people]
-    )
-    company_links = bullets(
-        [wikilink(company_slugs.get(c.name, slugify(c.name)), c.name) for c in eri.companies]
-    )
+    # Unknown name -> plain text, not a guessed slugify() link: a raw-slug
+    # fallback could point at the wrong person's note after a merge.
+    people_links = bullets([_link_or_name(person_slugs, p.name) for p in eri.people])
+    company_links = bullets([_link_or_name(company_slugs, c.name) for c in eri.companies])
     opp_links = bullets([wikilink(slug, opp_name) for slug, opp_name in opportunity_links])
     raw_body = (
         raw.raw_text

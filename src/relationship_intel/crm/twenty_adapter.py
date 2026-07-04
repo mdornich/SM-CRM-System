@@ -162,6 +162,17 @@ class TwentyCRMAdapter(CRMAdapter):
         return self._ref("opportunity", self._create("opportunities", "opportunity", body))
 
     def attach_note(self, ref: CRMRef, note: NotePayload) -> CRMRef:
+        # Retry-safe two-phase create+link: reuse an existing same-title note
+        # (a prior run may have created it but crashed before linking), refresh
+        # its body, and only link when no target row exists yet — otherwise a
+        # crash between create and link duplicates the note on every retry.
+        existing = self._find_by_title("notes", note.title)
+        if existing:
+            self._request(
+                "PATCH", f"/notes/{existing['id']}", json={"bodyV2": {"markdown": note.body}}
+            )
+            self._ensure_target("noteTargets", "noteId", existing["id"], ref)
+            return self._ref("note", existing)
         created = self._create(
             "notes", "note", {"title": note.title, "bodyV2": {"markdown": note.body}}
         )
@@ -174,6 +185,13 @@ class TwentyCRMAdapter(CRMAdapter):
         return self._ref("note", created)
 
     def create_task(self, ref: CRMRef, task: TaskPayload) -> CRMRef:
+        existing = self._find_by_title("tasks", task.title)
+        if existing:
+            self._request(
+                "PATCH", f"/tasks/{existing['id']}", json={"bodyV2": {"markdown": task.body}}
+            )
+            self._ensure_target("taskTargets", "taskId", existing["id"], ref)
+            return self._ref("task", existing)
         created = self._create(
             "tasks",
             "task",
@@ -185,6 +203,23 @@ class TwentyCRMAdapter(CRMAdapter):
             json={"taskId": created["id"], f"{ref.object_type}Id": ref.crm_id},
         )
         return self._ref("task", created)
+
+    def _find_by_title(self, objects: str, title: str) -> dict | None:
+        safe_title = _filter_safe(title)
+        if not safe_title:
+            return None
+        return self._find_one(objects, f"title[eq]:{safe_title}")
+
+    def _ensure_target(self, objects: str, id_field: str, record_id: str, ref: CRMRef) -> None:
+        payload = self._request(
+            "GET", f"/{objects}", params={"filter": f"{id_field}[eq]:{record_id}", "limit": 1}
+        )
+        if not payload.get("data", {}).get(objects, []):
+            self._request(
+                "POST",
+                f"/{objects}",
+                json={id_field: record_id, f"{ref.object_type}Id": ref.crm_id},
+            )
 
     def tag_record(self, ref: CRMRef, tags: list[str]) -> None:
         # Twenty has no first-class tag object on core records; Phase 2 decision is

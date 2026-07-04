@@ -321,7 +321,7 @@ Implementations:
    emitted reports with a vendored copy of the same validator logic.
 
 **Week convention:** weeks start **Monday**. `weekly-plan` defaults
-`--week-start` to the Monday of the current ISO week (e.g. run on Fri
+`--week-start` to the Monday of the current ISO week (e.g. run on Sat
 2026-07-04 → week of Mon 2026-06-29); `--week-start` overrides for planning
 the upcoming week.
 

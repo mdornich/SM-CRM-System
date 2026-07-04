@@ -109,6 +109,15 @@ class MockCRMAdapter(CRMAdapter):
                 "status": "TODO",
             }
             self._save("tasks", data)
+        elif (
+            data[key]["body"] != task.body
+            or data[key]["due_window"] != task.due_window
+            or data[key]["assignee"] != task.assignee
+        ):
+            # Re-delivery with the same title updates the task in place,
+            # mirroring attach_note.
+            data[key].update(body=task.body, due_window=task.due_window, assignee=task.assignee)
+            self._save("tasks", data)
         return CRMRef(self.provider, "task", data[key]["id"])
 
     def tag_record(self, ref: CRMRef, tags: list[str]) -> None:

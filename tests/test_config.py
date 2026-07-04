@@ -52,6 +52,16 @@ def test_store_raw_transcripts_boolean_forms(monkeypatch):
         assert load_settings().store_raw_transcripts is expected, value
 
 
+def test_invalid_stall_threshold_is_a_clear_config_error(monkeypatch):
+    import pytest
+
+    from relationship_intel.errors import NotConfiguredError
+
+    monkeypatch.setenv("STALL_THRESHOLD_DAYS", "three weeks")
+    with pytest.raises(NotConfiguredError, match="STALL_THRESHOLD_DAYS"):
+        load_settings()
+
+
 def test_bool_helper_default_only_on_missing_or_blank():
     assert _bool(None, True) is True
     assert _bool("  ", False) is False

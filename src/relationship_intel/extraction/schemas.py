@@ -95,7 +95,7 @@ class Person(BaseModel):
     title: str | None = None
     role_in_opportunity: str | None = None
     relationship_to_owner: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list)
     identity_confidence: IdentityConfidence = IdentityConfidence.high
     needs_review: bool = False
@@ -108,7 +108,7 @@ class Company(BaseModel):
     location: str | None = None
     size_estimate: str | None = None
     ownership_context: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list)
 
 
@@ -131,7 +131,7 @@ class SuccessionLeadProfile(BaseModel):
     next_action_due_window: str | None = None
     recommended_cadence: str | None = None
     suggested_message: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence_snippets: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

@@ -53,6 +53,13 @@ def test_unknown_crm_choice_is_an_argparse_error(tmp_path):
     assert "invalid choice" in result.stderr
 
 
+def test_malformed_week_start_is_a_clean_error(tmp_path):
+    result = _run(["weekly-plan", "--week-start", "not-a-date"], tmp_path)
+    assert result.returncode == 2
+    assert "Invalid --week-start" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_sync_twenty_without_key_fails_cleanly(tmp_path):
     result = _run(["sync-crm", "--crm", "twenty"], tmp_path)
     assert result.returncode == 2

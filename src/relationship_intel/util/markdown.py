@@ -11,8 +11,11 @@ def yaml_value(value) -> str:
     if isinstance(value, list):
         return "[" + ", ".join(str(v) for v in value) + "]"
     text = str(value)
-    if any(ch in text for ch in ":#{}[]") or text != text.strip():
-        return '"' + text.replace('"', '\\"') + '"'
+    if any(ch in text for ch in ':#{}[]"\\\n') or text != text.strip():
+        # Double-quoted YAML scalar with full escaping — an embedded newline
+        # would otherwise corrupt the frontmatter block (and content_hash parse).
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return f'"{escaped}"'
     return text
 
 

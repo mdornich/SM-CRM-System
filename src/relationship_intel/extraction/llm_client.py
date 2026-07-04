@@ -73,9 +73,8 @@ class MockLLMClient(LLMClient):
     """Deterministic rule-based extraction keyed off the succession lens cue tables."""
 
     def complete(self, system: str, user: str, response_schema: dict) -> dict:
-        meta = json.loads(_between(user, "<metadata>", "</metadata>"))
-        transcript = _between(user, "<transcript>", "</transcript>").strip()
-        return self._extract(meta, transcript)
+        payload = json.loads(user)
+        return self._extract(payload["metadata"], payload["transcript"].strip())
 
     # -- rule engine ---------------------------------------------------------
 
@@ -127,7 +126,10 @@ class MockLLMClient(LLMClient):
         # referral sentences are excluded from exit scanning per the lens rule).
         profiles = []
         for name, info in people_info.items():
-            if owner and (name == owner or name.split()[0] == owner or owner in name):
+            # Token-based owner match: exact full-name match, or a single-token
+            # owner ("James") matching the first-name token. Substring matching
+            # would silently drop unrelated attendees ("Janet" for owner "Jan").
+            if owner and (name == owner or (len(owner.split()) == 1 and name.split()[0] == owner)):
                 info["is_owner"] = True
                 continue
             sentences = [s for text in utterances.get(name, []) for s in _sentences(text)]
@@ -309,10 +311,6 @@ class MockLLMClient(LLMClient):
 def _matches(sentence: str, cues: list[str]) -> bool:
     lowered = sentence.lower()
     return any(cue in lowered for cue in cues)
-
-
-def _between(text: str, start: str, end: str) -> str:
-    return text.split(start, 1)[1].split(end, 1)[0]
 
 
 def make_client(provider: str, anthropic_api_key: str = "") -> LLMClient:

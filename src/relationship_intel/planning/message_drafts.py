@@ -8,6 +8,8 @@ DRAFT_MARKER = "DRAFT — not sent"
 _FALLBACKS = {
     "warm": "{first}, I enjoyed our recent conversation and wanted to follow up "
     "on the timing we discussed. Open to a quick call this week?",
+    "active": "{first}, following up on our open conversation — want to keep "
+    "the momentum going. What works this week?",
     "referral_source": "{first}, thank you again for offering introductions — "
     "happy to make that as easy as possible for you and your clients.",
     "cold": "{first}, it's been a while since we last spoke — no agenda, just "

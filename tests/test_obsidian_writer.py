@@ -123,6 +123,14 @@ def test_same_name_people_get_distinct_notes(tmp_path, settings):
     assert len(notes) == 2
 
 
+def test_yaml_value_escapes_newlines_and_backslashes():
+    from relationship_intel.util.markdown import yaml_value
+
+    assert yaml_value("a\nb") == '"a\\nb"'
+    assert yaml_value("back\\slash") == '"back\\\\slash"'
+    assert "\n" not in yaml_value("multi\nline\nvalue")
+
+
 def test_jsonl_indexes_are_valid(settings, samples_dir):
     pipeline.run_ingest(settings, samples_dir)
     index_dir = settings.obsidian_vault_path / "relationship-intelligence" / "indexes"

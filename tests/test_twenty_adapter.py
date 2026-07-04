@@ -93,6 +93,8 @@ def test_note_uses_bodyv2_markdown_and_note_target_link():
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"notes": []}})
         if request.url.path.endswith("/notes"):
             return httpx.Response(201, json={"data": {"createNote": {"id": "n-1"}}})
         return httpx.Response(201, json={"data": {"createNoteTarget": {"id": "nt-1"}}})
@@ -102,10 +104,73 @@ def test_note_uses_bodyv2_markdown_and_note_target_link():
     _adapter(handler).attach_note(
         CRMRef("twenty", "person", "p-1"), NotePayload(title="T", body="summary text")
     )
-    note_body = json.loads(calls[0].content)
+    posts = [c for c in calls if c.method == "POST"]
+    note_body = json.loads(posts[0].content)
     assert note_body["bodyV2"] == {"markdown": "summary text"}
-    target_body = json.loads(calls[1].content)
-    assert target_body == {"noteId": "n-1", "personId": "p-1"}
+    assert json.loads(posts[1].content) == {"noteId": "n-1", "personId": "p-1"}
+
+
+def test_attach_note_retry_reuses_orphaned_note_and_links_it():
+    """Create-then-link retry safety: an existing same-title (orphaned) note is
+    reused, its body refreshed, and it is linked only because no target exists."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET" and request.url.path.endswith("/notes"):
+            return httpx.Response(200, json={"data": {"notes": [{"id": "n-9"}]}})
+        if request.method == "GET" and request.url.path.endswith("/noteTargets"):
+            return httpx.Response(200, json={"data": {"noteTargets": []}})
+        if request.method == "PATCH":
+            return httpx.Response(200, json={"data": {"updateNote": {"id": "n-9"}}})
+        return httpx.Response(201, json={"data": {"createNoteTarget": {"id": "nt-1"}}})
+
+    from relationship_intel.crm.base import NotePayload
+
+    ref = _adapter(handler).attach_note(
+        CRMRef("twenty", "person", "p-1"), NotePayload(title="T", body="new body")
+    )
+    assert ref.crm_id == "n-9"
+    methods = [(c.method, c.url.path) for c in calls]
+    assert ("PATCH", "/rest/notes/n-9") in methods
+    assert ("POST", "/rest/notes") not in methods  # no duplicate note created
+    link_posts = [c for c in calls if c.method == "POST"]
+    assert json.loads(link_posts[0].content) == {"noteId": "n-9", "personId": "p-1"}
+
+
+def test_attach_note_skips_relink_when_target_exists():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET" and request.url.path.endswith("/notes"):
+            return httpx.Response(200, json={"data": {"notes": [{"id": "n-9"}]}})
+        if request.method == "GET" and request.url.path.endswith("/noteTargets"):
+            return httpx.Response(200, json={"data": {"noteTargets": [{"id": "nt-1"}]}})
+        return httpx.Response(200, json={"data": {"updateNote": {"id": "n-9"}}})
+
+    from relationship_intel.crm.base import NotePayload
+
+    _adapter(handler).attach_note(
+        CRMRef("twenty", "person", "p-1"), NotePayload(title="T", body="b")
+    )
+    assert not [c for c in calls if c.method == "POST"]  # no duplicate link row
+
+
+def test_opportunity_update_patches_existing_record():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"opportunities": [{"id": "o-7"}]}})
+        return httpx.Response(200, json={"data": {"updateOpportunity": {"id": "o-7"}}})
+
+    ref = _adapter(handler).create_or_update_opportunity({"name": "Deal", "stage": "qualified"})
+    assert ref.crm_id == "o-7"
+    patch = next(c for c in calls if c.method == "PATCH")
+    assert patch.url.path == "/rest/opportunities/o-7"
+    assert json.loads(patch.content)["stage"] == "MEETING"
 
 
 def test_task_uses_bodyv2_markdown_and_task_target_link():
@@ -113,6 +178,8 @@ def test_task_uses_bodyv2_markdown_and_task_target_link():
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"tasks": []}})
         if request.url.path.endswith("/tasks"):
             return httpx.Response(201, json={"data": {"createTask": {"id": "t-1"}}})
         return httpx.Response(201, json={"data": {"createTaskTarget": {"id": "tt-1"}}})
@@ -122,11 +189,12 @@ def test_task_uses_bodyv2_markdown_and_task_target_link():
     _adapter(handler).create_task(
         CRMRef("twenty", "person", "p-1"), TaskPayload(title="Call Bob", body="do it")
     )
-    task_body = json.loads(calls[0].content)
+    posts = [c for c in calls if c.method == "POST"]
+    task_body = json.loads(posts[0].content)
     assert task_body["title"] == "Call Bob"
     assert task_body["bodyV2"] == {"markdown": "do it"}
     assert task_body["status"] == "TODO"
-    assert json.loads(calls[1].content) == {"taskId": "t-1", "personId": "p-1"}
+    assert json.loads(posts[1].content) == {"taskId": "t-1", "personId": "p-1"}
 
 
 def test_dsl_metacharacters_skip_filter_lookup_and_create_directly():
