@@ -12,6 +12,13 @@ API facts verified against the fork source on 2026-07-04 (docs/twenty-setup.md):
 - Task/note linking goes through join tables (taskTargets/noteTargets) via a
   second POST using target-prefixed FKs (targetPersonId, ...) — verified live
   against the running fork (Phase 2, 2026-07-04).
+- Custom-field provisioning: REST metadata surface at /rest/metadata/objects and
+  /rest/metadata/fields, same Bearer auth (key role needs the DATA_MODEL settings
+  permission). List envelope is {data: [...], pageInfo, totalCount}; each object
+  embeds its fields. Created fields are immediately writable via /rest — the
+  metadata mutation invalidates the workspace schema cache automatically
+  (workspace-migration-runner.service.ts). SELECT option values must match
+  /^[_A-Za-z][_0-9A-Za-z]*$/, field names /^[a-z][a-zA-Z0-9]*$/.
 
 Secrets never reach logs; requests are logged as method+path only."""
 
@@ -19,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import re
+from copy import deepcopy
 
 import httpx
 
@@ -41,11 +49,96 @@ logger = logging.getLogger(__name__)
 # value can't be expressed safely we skip the lookup and fall through to create.
 _DSL_UNSAFE = re.compile(r"[,()\[\]]")
 
+_LEAD_TYPE_OPTIONS = [
+    ("Cold", "COLD", "gray"),
+    ("Warm", "WARM", "orange"),
+    ("Active", "ACTIVE", "green"),
+    ("Referral source", "REFERRAL_SOURCE", "blue"),
+    ("Partner", "PARTNER", "purple"),
+    ("Not fit", "NOT_FIT", "red"),
+    ("Unknown", "UNKNOWN", "gray"),
+]
+_TIMING_WINDOW_OPTIONS = [
+    ("Immediate", "IMMEDIATE", "red"),
+    ("0-3 months", "MONTHS_0_3", "orange"),
+    ("3-6 months", "MONTHS_3_6", "yellow"),
+    ("6-12 months", "MONTHS_6_12", "blue"),
+    ("Long term", "LONG_TERM", "gray"),
+    ("Unknown", "UNKNOWN", "gray"),
+]
+
+_LEAD_TYPE_TO_TWENTY = {
+    "cold": "COLD",
+    "warm": "WARM",
+    "active": "ACTIVE",
+    "referral_source": "REFERRAL_SOURCE",
+    "partner": "PARTNER",
+    "not_fit": "NOT_FIT",
+    "unknown": "UNKNOWN",
+}
+_LEAD_TYPE_FROM_TWENTY = {value: key for key, value in _LEAD_TYPE_TO_TWENTY.items()}
+_TIMING_WINDOW_TO_TWENTY = {
+    "immediate": "IMMEDIATE",
+    "0_3_months": "MONTHS_0_3",
+    "3_6_months": "MONTHS_3_6",
+    "6_12_months": "MONTHS_6_12",
+    "long_term": "LONG_TERM",
+    "unknown": "UNKNOWN",
+}
+_TIMING_WINDOW_FROM_TWENTY = {value: key for key, value in _TIMING_WINDOW_TO_TWENTY.items()}
+
+
+def _select_options(values: list[tuple[str, str, str]]) -> list[dict]:
+    return [
+        {"label": label, "value": value, "color": color, "position": index}
+        for index, (label, value, color) in enumerate(values)
+    ]
+
+
+OPPORTUNITY_CUSTOM_FIELDS = [
+    {
+        "name": "successionSignalScore",
+        "label": "Succession signal score",
+        "description": "Relationship-intel succession score from 0 to 100.",
+        "type": "NUMBER",
+        "isNullable": True,
+        "settings": {"dataType": "int", "decimals": 0, "type": "number"},
+    },
+    {
+        "name": "leadType",
+        "label": "Lead type",
+        "description": "Relationship-intel lead classification.",
+        "type": "SELECT",
+        "isNullable": True,
+        "options": _select_options(_LEAD_TYPE_OPTIONS),
+    },
+    {
+        "name": "timingWindow",
+        "label": "Timing window",
+        "description": "Relationship-intel estimated timing window.",
+        "type": "SELECT",
+        "isNullable": True,
+        "options": _select_options(_TIMING_WINDOW_OPTIONS),
+    },
+]
+
 
 def _filter_safe(value: str | None) -> str | None:
     if not value or _DSL_UNSAFE.search(value):
         return None
     return value
+
+
+def _to_twenty_select(value: str | None, mapping: dict[str, str]) -> str | None:
+    if value is None:
+        return None
+    return mapping.get(value, mapping["unknown"])
+
+
+def _from_twenty_select(value: str | None, mapping: dict[str, str]) -> str:
+    if not value:
+        return "unknown"
+    return mapping.get(value, value.lower())
 
 
 def _target_link(ref: CRMRef) -> dict:
@@ -106,7 +199,29 @@ class TwentyCRMAdapter(CRMAdapter):
     def _ref(self, object_type: str, record: dict) -> CRMRef:
         return CRMRef(self.provider, object_type, str(record["id"]))
 
+    def _opportunity_metadata(self) -> dict:
+        payload = self._request("GET", "/metadata/objects", params={"limit": 1000})
+        for record in payload.get("data", []):
+            if record.get("nameSingular") == "opportunity":
+                return record
+        raise RuntimeError("Twenty metadata object 'opportunity' not found")
+
     # -- interface ---------------------------------------------------------------
+
+    def ensure_schema(self) -> dict:
+        opportunity = self._opportunity_metadata()
+        fields_by_name = {field.get("name"): field for field in opportunity.get("fields", [])}
+        created: list[str] = []
+        existing: list[str] = []
+        for field in OPPORTUNITY_CUSTOM_FIELDS:
+            if field["name"] in fields_by_name:
+                existing.append(field["name"])
+                continue
+            body = deepcopy(field)
+            body["objectMetadataId"] = opportunity["id"]
+            self._request("POST", "/metadata/fields", json=body)
+            created.append(field["name"])
+        return {"created": created, "existing": existing}
 
     def find_or_create_contact(self, person: dict) -> CRMRef:
         email = (person.get("email") or "").lower()
@@ -165,6 +280,14 @@ class TwentyCRMAdapter(CRMAdapter):
             body["pointOfContactId"] = opportunity["person_crm_id"]
         if opportunity.get("company_crm_id"):
             body["companyId"] = opportunity["company_crm_id"]
+        if "lead_type" in opportunity:
+            body["leadType"] = _to_twenty_select(opportunity["lead_type"], _LEAD_TYPE_TO_TWENTY)
+        if "succession_signal_score" in opportunity:
+            body["successionSignalScore"] = opportunity["succession_signal_score"]
+        if "timing_window" in opportunity:
+            body["timingWindow"] = _to_twenty_select(
+                opportunity["timing_window"], _TIMING_WINDOW_TO_TWENTY
+            )
         if existing:
             self._request("PATCH", f"/opportunities/{existing['id']}", json=body)
             return self._ref("opportunity", existing)
@@ -242,10 +365,12 @@ class TwentyCRMAdapter(CRMAdapter):
                     .get("firstName", ""),
                     company_name=(record.get("company") or {}).get("name"),
                     stage=record.get("stage", "NEW"),
-                    lead_type="unknown",
-                    succession_signal_score=0,
+                    lead_type=_from_twenty_select(record.get("leadType"), _LEAD_TYPE_FROM_TWENTY),
+                    succession_signal_score=int(record.get("successionSignalScore") or 0),
                     urgency="unknown",
-                    timing_window="unknown",
+                    timing_window=_from_twenty_select(
+                        record.get("timingWindow"), _TIMING_WINDOW_FROM_TWENTY
+                    ),
                     next_action=None,
                     next_action_due=None,
                     crm_ref=self._ref("opportunity", record),

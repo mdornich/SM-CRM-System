@@ -71,6 +71,77 @@ def test_company_domain_filter_and_links_composite():
     assert body["domainName"] == {"primaryLinkUrl": "https://smithhvac.com"}
 
 
+def test_ensure_schema_creates_missing_opportunity_custom_fields():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "object-opportunity",
+                            "nameSingular": "opportunity",
+                            "fields": [{"name": "leadType"}],
+                        }
+                    ],
+                    "pageInfo": {},
+                    "totalCount": 1,
+                },
+            )
+        return httpx.Response(201, json={"id": "field-new"})
+
+    result = _adapter(handler).ensure_schema()
+    assert result == {
+        "created": ["successionSignalScore", "timingWindow"],
+        "existing": ["leadType"],
+    }
+    posts = [request for request in calls if request.method == "POST"]
+    assert [json.loads(request.content)["name"] for request in posts] == [
+        "successionSignalScore",
+        "timingWindow",
+    ]
+    score_field = json.loads(posts[0].content)
+    assert score_field["objectMetadataId"] == "object-opportunity"
+    assert score_field["type"] == "NUMBER"
+    assert score_field["settings"] == {"dataType": "int", "decimals": 0, "type": "number"}
+    timing_field = json.loads(posts[1].content)
+    assert timing_field["type"] == "SELECT"
+    assert {option["value"] for option in timing_field["options"]} >= {"MONTHS_3_6", "UNKNOWN"}
+
+
+def test_ensure_schema_noops_when_fields_exist():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "object-opportunity",
+                        "nameSingular": "opportunity",
+                        "fields": [
+                            {"name": "successionSignalScore"},
+                            {"name": "leadType"},
+                            {"name": "timingWindow"},
+                        ],
+                    }
+                ],
+            },
+        )
+
+    result = _adapter(handler).ensure_schema()
+    assert result == {
+        "created": [],
+        "existing": ["successionSignalScore", "leadType", "timingWindow"],
+    }
+    assert [request.method for request in calls] == ["GET"]
+
+
 def test_opportunity_stage_mapping_and_unmapped_stage_rejected():
     calls = []
 
@@ -81,8 +152,20 @@ def test_opportunity_stage_mapping_and_unmapped_stage_rejected():
         return httpx.Response(201, json={"data": {"createOpportunity": {"id": "o-1"}}})
 
     adapter = _adapter(handler)
-    adapter.create_or_update_opportunity({"name": "Smith HVAC — Succession", "stage": "discovery"})
-    assert json.loads(calls[-1].content)["stage"] == "SCREENING"
+    adapter.create_or_update_opportunity(
+        {
+            "name": "Smith HVAC — Succession",
+            "stage": "discovery",
+            "lead_type": "warm",
+            "succession_signal_score": 72,
+            "timing_window": "3_6_months",
+        }
+    )
+    body = json.loads(calls[-1].content)
+    assert body["stage"] == "SCREENING"
+    assert body["leadType"] == "WARM"
+    assert body["successionSignalScore"] == 72
+    assert body["timingWindow"] == "MONTHS_3_6"
 
     with pytest.raises(ValueError, match="not_fit"):
         adapter.create_or_update_opportunity({"name": "X", "stage": "not_fit"})
@@ -171,6 +254,35 @@ def test_opportunity_update_patches_existing_record():
     patch = next(c for c in calls if c.method == "PATCH")
     assert patch.url.path == "/rest/opportunities/o-7"
     assert json.loads(patch.content)["stage"] == "MEETING"
+
+
+def test_get_pipeline_items_reads_opportunity_custom_fields():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "opportunities": [
+                        {
+                            "id": "o-1",
+                            "stage": "SCREENING",
+                            "leadType": "WARM",
+                            "successionSignalScore": 63,
+                            "timingWindow": "MONTHS_6_12",
+                            "pointOfContact": {"name": {"firstName": "Bob"}},
+                            "company": {"name": "Smith HVAC"},
+                        }
+                    ]
+                }
+            },
+        )
+
+    items = _adapter(handler).get_pipeline_items()
+    assert len(items) == 1
+    assert items[0].lead_type == "warm"
+    assert items[0].succession_signal_score == 63
+    assert items[0].timing_window == "6_12_months"
 
 
 def test_task_uses_bodyv2_markdown_and_task_target_link():

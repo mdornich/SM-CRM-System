@@ -43,14 +43,30 @@ mock CRM, and generates the weekly plan. Then look at:
 
 ```bash
 python -m relationship_intel.cli init                 # create store + vault skeleton
+python -m relationship_intel.cli ingest               # defaults to TRANSCRIPTS_INBOX_DIR
 python -m relationship_intel.cli ingest --source examples/transcripts
 python -m relationship_intel.cli sync-crm --crm mock  # or --crm twenty (needs TWENTY_API_KEY)
 python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
+python -m relationship_intel.cli query who-to-call --json
 python -m relationship_intel.cli run-demo
 ```
 
+Add `--json` to any command for machine-readable stdout. `query` supports
+`pipeline`, `last-touch`, and `who-to-call`; all read from SQLite without an LLM.
+
 Configuration via `.env` (copy `.env.example`). Weeks start **Monday**;
-`weekly-plan` defaults to the current week's Monday.
+`weekly-plan` defaults to the current week's Monday. For the local go-live setup,
+`TRANSCRIPTS_INBOX_DIR` should point at the vault's `transcripts-inbox` folder.
+
+Daily automation is defined in
+`launchd/com.stablemischief.relationship-intel.daily.plist`; it runs
+`scripts/relationship-intel-daily.sh` at 7:30 AM, performing
+`init -> ingest -> sync-crm`, plus `weekly-plan` on Mondays. Install with:
+
+```bash
+cp launchd/com.stablemischief.relationship-intel.daily.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.stablemischief.relationship-intel.daily.plist
+```
 
 ## Tests & CI
 

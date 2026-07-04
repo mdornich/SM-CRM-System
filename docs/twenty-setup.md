@@ -64,7 +64,9 @@ Start: `cd ~/Documents/GitHub/twenty && export PATH="$HOME/.nvm/versions/node/v2
   the pipeline never touches records it didn't create.
 - Tags: Twenty has no native tag object on core records; `tag_record` is a
   logged no-op pending a custom-field decision.
-- Custom fields for `succession_signal_score` / `lead_type` / `timing_window`:
-  decide when provisioning the workspace (architecture.md open question 2).
+- Custom fields are provisioned additively by `sync-crm --crm twenty` through
+  `/rest/metadata`: Opportunity gets `successionSignalScore` (NUMBER),
+  `leadType` (SELECT), and `timingWindow` (SELECT). The API key role must have
+  the DATA_MODEL settings permission, or schema provisioning fails before sync.
 - Upstream moves fast; after pulling the fork, re-verify the composite shapes
   before trusting the adapter.
