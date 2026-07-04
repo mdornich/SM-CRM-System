@@ -55,8 +55,13 @@ Start: `cd ~/Documents/GitHub/twenty && export PATH="$HOME/.nvm/versions/node/v2
 ## Known caveats (Phase 2 work)
 
 - **Task/note linking** uses join tables (`taskTargets` / `noteTargets`) via a
-  second POST — this is the least-verified adapter path; the Phase 2 exit
-  criterion is the POC dataset visible and correct in the Twenty UI.
+  second POST with **target-prefixed FKs** (`targetPersonId`, `targetCompanyId`,
+  `targetOpportunityId`) — verified live against the running fork on 2026-07-04
+  (Phase 2 sync: POC dataset visible and correct in the Twenty UI, second sync
+  a full no-op).
+- A fresh Twenty workspace ships with built-in sample records (Notion/Anthropic/
+  Airbnb/etc. people and demo opportunities); delete them in the UI if unwanted —
+  the pipeline never touches records it didn't create.
 - Tags: Twenty has no native tag object on core records; `tag_record` is a
   logged no-op pending a custom-field decision.
 - Custom fields for `succession_signal_score` / `lead_type` / `timing_window`:

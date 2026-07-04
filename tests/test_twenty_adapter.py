@@ -107,7 +107,7 @@ def test_note_uses_bodyv2_markdown_and_note_target_link():
     posts = [c for c in calls if c.method == "POST"]
     note_body = json.loads(posts[0].content)
     assert note_body["bodyV2"] == {"markdown": "summary text"}
-    assert json.loads(posts[1].content) == {"noteId": "n-1", "personId": "p-1"}
+    assert json.loads(posts[1].content) == {"noteId": "n-1", "targetPersonId": "p-1"}
 
 
 def test_attach_note_retry_reuses_orphaned_note_and_links_it():
@@ -135,7 +135,7 @@ def test_attach_note_retry_reuses_orphaned_note_and_links_it():
     assert ("PATCH", "/rest/notes/n-9") in methods
     assert ("POST", "/rest/notes") not in methods  # no duplicate note created
     link_posts = [c for c in calls if c.method == "POST"]
-    assert json.loads(link_posts[0].content) == {"noteId": "n-9", "personId": "p-1"}
+    assert json.loads(link_posts[0].content) == {"noteId": "n-9", "targetPersonId": "p-1"}
 
 
 def test_attach_note_skips_relink_when_target_exists():
@@ -194,7 +194,7 @@ def test_task_uses_bodyv2_markdown_and_task_target_link():
     assert task_body["title"] == "Call Bob"
     assert task_body["bodyV2"] == {"markdown": "do it"}
     assert task_body["status"] == "TODO"
-    assert json.loads(posts[1].content) == {"taskId": "t-1", "personId": "p-1"}
+    assert json.loads(posts[1].content) == {"taskId": "t-1", "targetPersonId": "p-1"}
 
 
 def test_dsl_metacharacters_skip_filter_lookup_and_create_directly():

@@ -10,7 +10,8 @@ API facts verified against the fork source on 2026-07-04 (docs/twenty-setup.md):
   data.<plural> (list) and data.create<Object> (create)
 - Default opportunity stages: NEW SCREENING MEETING PROPOSAL CUSTOMER
 - Task/note linking goes through join tables (taskTargets/noteTargets) via a
-  second POST — the least-verified path until the Phase 2 integration test.
+  second POST using target-prefixed FKs (targetPersonId, ...) — verified live
+  against the running fork (Phase 2, 2026-07-04).
 
 Secrets never reach logs; requests are logged as method+path only."""
 
@@ -45,6 +46,14 @@ def _filter_safe(value: str | None) -> str | None:
     if not value or _DSL_UNSAFE.search(value):
         return None
     return value
+
+
+def _target_link(ref: CRMRef) -> dict:
+    """noteTargets/taskTargets FK payload. The join tables use target-prefixed
+    relation fields (targetPersonId, targetCompanyId, targetOpportunityId) —
+    verified live against the running fork and note-target.workspace-entity.ts."""
+    field = f"target{ref.object_type[0].upper()}{ref.object_type[1:]}Id"
+    return {field: ref.crm_id}
 
 
 # Spec stage vocabulary -> Twenty default pipeline stages. Unmapped spec stages
@@ -180,7 +189,7 @@ class TwentyCRMAdapter(CRMAdapter):
         self._request(
             "POST",
             "/noteTargets",
-            json={"noteId": created["id"], f"{ref.object_type}Id": ref.crm_id},
+            json={"noteId": created["id"], **_target_link(ref)},
         )
         return self._ref("note", created)
 
@@ -200,7 +209,7 @@ class TwentyCRMAdapter(CRMAdapter):
         self._request(
             "POST",
             "/taskTargets",
-            json={"taskId": created["id"], f"{ref.object_type}Id": ref.crm_id},
+            json={"taskId": created["id"], **_target_link(ref)},
         )
         return self._ref("task", created)
 
@@ -216,9 +225,7 @@ class TwentyCRMAdapter(CRMAdapter):
         )
         if not payload.get("data", {}).get(objects, []):
             self._request(
-                "POST",
-                f"/{objects}",
-                json={id_field: record_id, f"{ref.object_type}Id": ref.crm_id},
+                "POST", f"/{objects}", json={id_field: record_id, **_target_link(ref)}
             )
 
     def tag_record(self, ref: CRMRef, tags: list[str]) -> None:
