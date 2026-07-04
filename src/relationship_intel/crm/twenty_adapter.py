@@ -146,7 +146,9 @@ class TwentyCRMAdapter(CRMAdapter):
         )
         # Linking via join table — least-verified path until Phase 2 integration test.
         self._request(
-            "POST", "/noteTargets", json={"noteId": created["id"], f"{ref.object_type}Id": ref.crm_id}
+            "POST",
+            "/noteTargets",
+            json={"noteId": created["id"], f"{ref.object_type}Id": ref.crm_id},
         )
         return self._ref("note", created)
 
@@ -157,7 +159,9 @@ class TwentyCRMAdapter(CRMAdapter):
             {"title": task.title, "bodyV2": {"markdown": task.body}, "status": "TODO"},
         )
         self._request(
-            "POST", "/taskTargets", json={"taskId": created["id"], f"{ref.object_type}Id": ref.crm_id}
+            "POST",
+            "/taskTargets",
+            json={"taskId": created["id"], f"{ref.object_type}Id": ref.crm_id},
         )
         return self._ref("task", created)
 
@@ -172,9 +176,9 @@ class TwentyCRMAdapter(CRMAdapter):
         for record in payload.get("data", {}).get("opportunities", []):
             items.append(
                 PipelineItem(
-                    person_name=(record.get("pointOfContact") or {}).get("name", {}).get(
-                        "firstName", ""
-                    ),
+                    person_name=(record.get("pointOfContact") or {})
+                    .get("name", {})
+                    .get("firstName", ""),
                     company_name=(record.get("company") or {}).get("name"),
                     stage=record.get("stage", "NEW"),
                     lead_type="unknown",

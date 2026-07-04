@@ -33,15 +33,17 @@ def _sync_object(repo, adapter, object_type: str, local_id: int, payload: dict, 
 
 
 def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> dict:
-    stats = {"companies": 0, "people": 0, "opportunities": 0, "notes": 0, "tasks": 0,
-             "skipped": 0}
+    stats = {"companies": 0, "people": 0, "opportunities": 0, "notes": 0, "tasks": 0, "skipped": 0}
 
     company_refs: dict[int, str] = {}
     for company in repo.company_records():
-        payload = {"name": company.name, "domain": company.domain,
-                   "industry": company.industry}
+        payload = {"name": company.name, "domain": company.domain, "industry": company.industry}
         state, pushed = _sync_object(
-            repo, adapter, "company", company.id, payload,
+            repo,
+            adapter,
+            "company",
+            company.id,
+            payload,
             lambda p: adapter.find_or_create_company(p),
         )
         company_refs[company.id] = state["crm_id"]
@@ -56,7 +58,11 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
             "company_crm_id": company_refs.get(person.company_id),
         }
         state, pushed = _sync_object(
-            repo, adapter, "person", person.id, payload,
+            repo,
+            adapter,
+            "person",
+            person.id,
+            payload,
             lambda p: adapter.find_or_create_contact(p),
         )
         person_refs[person.id] = state["crm_id"]
@@ -111,7 +117,11 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
             "company_crm_id": company_refs.get(opp.company_id),
         }
         _, pushed = _sync_object(
-            repo, adapter, "opportunity", opp.id, payload,
+            repo,
+            adapter,
+            "opportunity",
+            opp.id,
+            payload,
             lambda p: adapter.create_or_update_opportunity(p),
         )
         stats["opportunities" if pushed else "skipped"] += 1

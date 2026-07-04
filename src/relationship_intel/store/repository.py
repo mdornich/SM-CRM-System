@@ -206,7 +206,11 @@ class Repository:
     # -- profiles / interactions / opportunities ------------------------------
 
     def add_lead_profile(
-        self, person_id: int, transcript_id: int, profile_json: str, lens_version: str,
+        self,
+        person_id: int,
+        transcript_id: int,
+        profile_json: str,
+        lens_version: str,
         llm_provider: str,
     ) -> None:
         exists = self.conn.execute(
@@ -233,7 +237,11 @@ class Repository:
         self.conn.commit()
 
     def upsert_opportunity(
-        self, name: str, person_id: int | None, company_id: int | None, profile: dict,
+        self,
+        name: str,
+        person_id: int | None,
+        company_id: int | None,
+        profile: dict,
         owner: str | None,
     ) -> int:
         row = self.conn.execute(
@@ -278,7 +286,12 @@ class Repository:
         ).fetchone()
 
     def set_sync_state(
-        self, provider: str, object_type: str, local_id: int, crm_id: str, url: str | None,
+        self,
+        provider: str,
+        object_type: str,
+        local_id: int,
+        crm_id: str,
+        url: str | None,
         pushed_hash: str,
     ) -> None:
         self.conn.execute(
@@ -403,7 +416,11 @@ class Repository:
         return {
             table: self.conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"]
             for table in (
-                "transcripts", "people", "companies", "opportunities",
-                "lead_profiles", "interactions",
+                "transcripts",
+                "people",
+                "companies",
+                "opportunities",
+                "lead_profiles",
+                "interactions",
             )
         }

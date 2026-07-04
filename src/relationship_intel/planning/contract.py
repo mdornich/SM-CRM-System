@@ -58,8 +58,7 @@ def build_report(plan: dict) -> dict:
             "llm_provider": plan["llm_provider"],
         },
         "findings": [
-            f"{item['person_name']} ({item['company_name'] or 'no company'}): "
-            f"{item['why_now']}"
+            f"{item['person_name']} ({item['company_name'] or 'no company'}): {item['why_now']}"
             for item in top
         ],
         "decisions": [
@@ -74,8 +73,11 @@ def build_report(plan: dict) -> dict:
         # morning-brief template shape
         "department": "CRM",
         "top_decisions": [
-            {"priority": i + 1, "summary": item["next_action"] or "review",
-             "context": item["why_now"]}
+            {
+                "priority": i + 1,
+                "summary": item["next_action"] or "review",
+                "context": item["why_now"],
+            }
             for i, item in enumerate(top)
         ],
         "flagged_anomalies": [

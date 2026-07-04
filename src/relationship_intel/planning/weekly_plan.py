@@ -31,14 +31,26 @@ def _days_since(week_start: date, last_interaction: str | None) -> int | None:
 
 
 def build_plan(
-    repo: Repository, owner: str, week_start: date, stall_threshold_days: int,
-    llm_provider: str, run_date: date,
+    repo: Repository,
+    owner: str,
+    week_start: date,
+    stall_threshold_days: int,
+    llm_provider: str,
+    run_date: date,
 ) -> dict:
     groups: dict[str, list[dict]] = {
         name: []
         for name in (
-            "top_plays", "hot", "overdue", "warm", "cold_retouch", "referral_nurture",
-            "stalled", "long_term", "not_ready", "needs_review",
+            "top_plays",
+            "hot",
+            "overdue",
+            "warm",
+            "cold_retouch",
+            "referral_nurture",
+            "stalled",
+            "long_term",
+            "not_ready",
+            "needs_review",
         )
     }
     people = repo.people_records()
@@ -60,9 +72,7 @@ def build_plan(
             and days is not None
             and days > due_days
         )
-        stalled = (
-            lead_type in PROSPECT_TYPES and days is not None and days >= stall_threshold_days
-        )
+        stalled = lead_type in PROSPECT_TYPES and days is not None and days >= stall_threshold_days
         cadence_days = _CADENCE_DAYS.get(profile.get("recommended_cadence") or "", 30)
 
         evidence = profile.get("evidence_snippets") or rec.evidence
@@ -81,9 +91,7 @@ def build_plan(
             "why_now": (evidence[0] if evidence else "no recorded signal"),
             "next_action": profile.get("next_best_action"),
             "next_action_due_window": profile.get("next_action_due_window"),
-            "suggested_message": draft_for(
-                rec.name, lead_type, profile.get("suggested_message")
-            ),
+            "suggested_message": draft_for(rec.name, lead_type, profile.get("suggested_message")),
             "evidence_links": transcript_links,
             "obsidian_link": wikilink(slugify(rec.name), rec.name),
             "crm_link": _crm_link(repo, rec.id),
@@ -124,8 +132,7 @@ def build_plan(
     for name, items in groups.items():
         groups[name] = sorted(items, key=rank)
     groups["top_plays"] = sorted(
-        {i["person_name"]: i for i in groups["overdue"] + groups["hot"] + groups["warm"]}
-        .values(),
+        {i["person_name"]: i for i in groups["overdue"] + groups["hot"] + groups["warm"]}.values(),
         key=rank,
     )[:3]
 
@@ -165,8 +172,11 @@ def _render_item(index: int, item: dict) -> list[str]:
     if item["next_action"]:
         lines.append(
             f"   - Next action: {item['next_action']}"
-            + (f" (due: {item['next_action_due_window']})"
-               if item["next_action_due_window"] else "")
+            + (
+                f" (due: {item['next_action_due_window']})"
+                if item["next_action_due_window"]
+                else ""
+            )
         )
     if item["suggested_message"]:
         lines.append(f"   - {item['suggested_message']}")
@@ -203,11 +213,13 @@ def to_markdown(plan: dict) -> str:
     lines += _render_group("Overdue", g["overdue"], "nothing overdue")
     lines += _render_group("Warm Follow-Ups", g["warm"], "no warm leads yet")
     lines += _render_group("Cold Retouches", g["cold_retouch"], "no retouches due")
-    lines += _render_group("Referral / Partner Nurture", g["referral_nurture"],
-                           "no referral sources tracked")
+    lines += _render_group(
+        "Referral / Partner Nurture", g["referral_nurture"], "no referral sources tracked"
+    )
     lines += _render_group("Stalled", g["stalled"], "nothing stalled")
-    lines += _render_group("Needs Review", g["needs_review"],
-                           "no identity flags — entity resolution is clean")
+    lines += _render_group(
+        "Needs Review", g["needs_review"], "no identity flags — entity resolution is clean"
+    )
     lines += [
         "## Risks",
         "",

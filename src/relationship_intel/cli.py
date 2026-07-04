@@ -1,10 +1,11 @@
 """CLI — commands per docs/build-prompt.md §"CLI commands".
 
-    python -m relationship_intel.cli init
-    python -m relationship_intel.cli ingest --source examples/transcripts --vault ./output/obsidian-vault
-    python -m relationship_intel.cli sync-crm --crm mock
-    python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
-    python -m relationship_intel.cli run-demo
+python -m relationship_intel.cli init
+python -m relationship_intel.cli ingest --source examples/transcripts \\
+    --vault ./output/obsidian-vault
+python -m relationship_intel.cli sync-crm --crm mock
+python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
+python -m relationship_intel.cli run-demo
 """
 
 from __future__ import annotations
@@ -38,8 +39,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     plan = sub.add_parser("weekly-plan", help="generate the beginning-of-week plan")
     plan.add_argument("--owner", default=None)
-    plan.add_argument("--week-start", default=None,
-                      help="ISO date (Monday); defaults to the current week's Monday")
+    plan.add_argument(
+        "--week-start",
+        default=None,
+        help="ISO date (Monday); defaults to the current week's Monday",
+    )
     plan.add_argument("--vault", default=None, type=Path)
 
     sub.add_parser("run-demo", help="full local POC: init + ingest samples + mock sync + plan")
@@ -58,8 +62,10 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "ingest":
             stats = pipeline.run_ingest(settings, args.source, args.vault)
-            print(f"Ingested {stats['ingested']} transcript(s), "
-                  f"skipped {stats['skipped_duplicates']} duplicate(s)")
+            print(
+                f"Ingested {stats['ingested']} transcript(s), "
+                f"skipped {stats['skipped_duplicates']} duplicate(s)"
+            )
 
         elif args.command == "sync-crm":
             stats = pipeline.run_sync(settings, args.crm)
@@ -68,8 +74,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "weekly-plan":
             week_start = parse_iso_date(args.week_start) if args.week_start else None
             plan = pipeline.run_weekly_plan(settings, args.owner, week_start, args.vault)
-            print(f"Weekly plan generated for {plan['owner']}, week of {plan['week_start']} "
-                  f"({sum(len(v) for v in plan['groups'].values())} grouped items)")
+            print(
+                f"Weekly plan generated for {plan['owner']}, week of {plan['week_start']} "
+                f"({sum(len(v) for v in plan['groups'].values())} grouped items)"
+            )
 
         elif args.command == "run-demo":
             vault = settings.obsidian_vault_path
@@ -78,10 +86,11 @@ def main(argv: list[str] | None = None) -> int:
             sync_stats = pipeline.run_sync(settings, "mock")
             plan = pipeline.run_weekly_plan(settings)
             vault_ri = Path(vault) / "relationship-intelligence"
-            print("\n=== run-demo complete (llm_provider="
-                  f"{settings.llm_provider}) ===")
-            print(f"Transcripts ingested: {stats['ingested']} "
-                  f"(duplicates skipped: {stats['skipped_duplicates']})")
+            print(f"\n=== run-demo complete (llm_provider={settings.llm_provider}) ===")
+            print(
+                f"Transcripts ingested: {stats['ingested']} "
+                f"(duplicates skipped: {stats['skipped_duplicates']})"
+            )
             print(f"Mock CRM sync: {sync_stats}")
             print(f"Vault notes:   {vault_ri}")
             print(f"Weekly plan:   {vault_ri}/weekly-plans/")

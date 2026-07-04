@@ -32,8 +32,7 @@ class Extractor:
             "transcript_hash": raw.transcript_hash,
         }
         user = (
-            f"<metadata>{json.dumps(meta)}</metadata>\n"
-            f"<transcript>\n{raw.raw_text}\n</transcript>"
+            f"<metadata>{json.dumps(meta)}</metadata>\n<transcript>\n{raw.raw_text}\n</transcript>"
         )
         result = self.client.complete(
             system=lens.EXTRACTION_PROMPT + "\n" + "\n".join(f"- {r}" for r in lens.RULES),
@@ -45,6 +44,8 @@ class Extractor:
         eri.lens_version = lens.LENS_VERSION
         logger.info(
             "Extracted transcript hash=%s: %d people, %d profiles",
-            raw.transcript_hash[:12], len(eri.people), len(eri.lead_profiles),
+            raw.transcript_hash[:12],
+            len(eri.people),
+            len(eri.lead_profiles),
         )
         return eri

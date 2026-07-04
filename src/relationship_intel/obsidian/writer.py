@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from relationship_intel.util.markdown import frontmatter_block
@@ -50,7 +50,10 @@ class VaultWriter:
         return self.root / folder / f"{note_name}.md"
 
     def write_note(
-        self, folder: str, note_name: str, frontmatter: list[tuple[str, object]],
+        self,
+        folder: str,
+        note_name: str,
+        frontmatter: list[tuple[str, object]],
         managed: str,
     ) -> Path:
         path = self.path_for(folder, note_name)
@@ -60,9 +63,7 @@ class VaultWriter:
         rendered_fm = frontmatter_block(frontmatter)
 
         if not path.exists():
-            path.write_text(
-                f"{rendered_fm}\n{BEGIN}\n{managed}\n{END}\n", encoding="utf-8"
-            )
+            path.write_text(f"{rendered_fm}\n{BEGIN}\n{managed}\n{END}\n", encoding="utf-8")
             return path
 
         existing = path.read_text(encoding="utf-8")
@@ -79,15 +80,17 @@ class VaultWriter:
         old_managed, post = rest.split(END, 1)
         old_managed = old_managed.strip("\n")
         fm_match = _FM_RE.match(pre_all)
-        pre = pre_all[fm_match.end():] if fm_match else pre_all
+        pre = pre_all[fm_match.end() :] if fm_match else pre_all
         old_hash = _stored_hash(fm_match.group(0)) if fm_match else None
 
         candidate = f"{rendered_fm}\n{pre}{BEGIN}\n{managed}\n{END}{post}"
         if candidate == existing:
             return path
 
-        manually_edited = bool(pre.strip()) or bool(post.strip()) or (
-            old_hash is not None and managed_hash(old_managed) != old_hash
+        manually_edited = (
+            bool(pre.strip())
+            or bool(post.strip())
+            or (old_hash is not None and managed_hash(old_managed) != old_hash)
         )
         if manually_edited:
             self._backup(path, existing)
@@ -98,7 +101,7 @@ class VaultWriter:
         rel = path.relative_to(self.root)
         backup_dir = self.root / ".ri-backups" / rel.parent / rel.stem
         backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
         (backup_dir / f"{stamp}.md").write_text(content, encoding="utf-8")
         backups = sorted(backup_dir.glob("*.md"))
         for old in backups[:-BACKUP_KEEP]:

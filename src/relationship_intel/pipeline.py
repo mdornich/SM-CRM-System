@@ -40,8 +40,15 @@ def make_adapter(settings: Settings, crm: str | None = None) -> CRMAdapter:
 def run_init(settings: Settings, vault: Path | None = None) -> Path:
     vault_root = vault or settings.obsidian_vault_path
     writer = VaultWriter(vault_root)
-    for folder in ("transcripts", "people", "companies", "opportunities",
-                   "weekly-plans", "indexes", "reports"):
+    for folder in (
+        "transcripts",
+        "people",
+        "companies",
+        "opportunities",
+        "weekly-plans",
+        "indexes",
+        "reports",
+    ):
         (writer.root / folder).mkdir(parents=True, exist_ok=True)
     writer.ensure_readme()
     open_repo(settings)  # creates the db + schema
@@ -75,8 +82,13 @@ def run_ingest(settings: Settings, source: Path, vault: Path | None = None) -> d
     return stats
 
 
-def _persist(repo: Repository, transcript_id: int, raw, eri: ExtractedRelationshipIntelligence,
-             settings: Settings) -> None:
+def _persist(
+    repo: Repository,
+    transcript_id: int,
+    raw,
+    eri: ExtractedRelationshipIntelligence,
+    settings: Settings,
+) -> None:
     company_ids: dict[str, int] = {}
     for company in eri.companies:
         company_ids[company.name], _ = repo.resolve_company(company)
@@ -92,14 +104,20 @@ def _persist(repo: Repository, transcript_id: int, raw, eri: ExtractedRelationsh
         repo.add_interaction(person_id, transcript_id, meeting_date, evidence)
         if profile:
             repo.add_lead_profile(
-                person_id, transcript_id, profile.model_dump_json(),
-                eri.lens_version, eri.llm_provider,
+                person_id,
+                transcript_id,
+                profile.model_dump_json(),
+                eri.lens_version,
+                eri.llm_provider,
             )
             if profile.lead_type.value in weekly_plan.PROSPECT_TYPES:
                 anchor = profile.company_name or person.name
                 repo.upsert_opportunity(
-                    f"{anchor} — Succession", person_id, company_id,
-                    profile.model_dump(mode="json"), raw.owner or settings.default_owner,
+                    f"{anchor} — Succession",
+                    person_id,
+                    company_id,
+                    profile.model_dump(mode="json"),
+                    raw.owner or settings.default_owner,
                 )
 
 
@@ -132,8 +150,12 @@ def _write_entity_notes(repo: Repository, writer: VaultWriter, llm_provider: str
         "transcript-index",
         [
             templates.json.dumps(
-                {"id": row["id"], "title": row["title"], "date": row["meeting_date"],
-                 "hash": row["transcript_hash"]},
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "date": row["meeting_date"],
+                    "hash": row["transcript_hash"],
+                },
                 sort_keys=True,
             )
             for row in repo.transcript_records()
@@ -148,8 +170,11 @@ def run_sync(settings: Settings, crm: str | None = None) -> dict:
 
 
 def run_weekly_plan(
-    settings: Settings, owner: str | None = None, week_start: date | None = None,
-    vault: Path | None = None, run_date: date | None = None,
+    settings: Settings,
+    owner: str | None = None,
+    week_start: date | None = None,
+    vault: Path | None = None,
+    run_date: date | None = None,
 ) -> dict:
     vault_root = vault or settings.obsidian_vault_path
     repo = open_repo(settings)
@@ -159,7 +184,11 @@ def run_weekly_plan(
     owner = owner or settings.default_owner
 
     plan = weekly_plan.build_plan(
-        repo, owner, week_start, settings.stall_threshold_days, settings.llm_provider,
+        repo,
+        owner,
+        week_start,
+        settings.stall_threshold_days,
+        settings.llm_provider,
         run_date,
     )
     repo.save_plan(owner, plan["week_start"], weekly_plan.to_json(plan))

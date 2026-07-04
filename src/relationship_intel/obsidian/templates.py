@@ -67,8 +67,16 @@ def transcript_note(raw, eri, store_raw: bool) -> tuple[str, list[tuple[str, obj
             section("Raw Transcript", [raw_body]),
             section(
                 "Extraction Links",
-                ["**People:**", *people_links, "", "**Companies:**", *company_links, "",
-                 "**Opportunities:**", *(opp_links or ["- _none_"])],
+                [
+                    "**People:**",
+                    *people_links,
+                    "",
+                    "**Companies:**",
+                    *company_links,
+                    "",
+                    "**Opportunities:**",
+                    *(opp_links or ["- _none_"]),
+                ],
             ),
         ]
     ).strip()
@@ -111,32 +119,41 @@ def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[s
                 bullets(
                     [
                         f"Title: {rec.title or 'unknown'}",
-                        f"Company: "
-                        + (wikilink(slugify(rec.company_name), rec.company_name)
-                           if rec.company_name else "unknown"),
+                        "Company: "
+                        + (
+                            wikilink(slugify(rec.company_name), rec.company_name)
+                            if rec.company_name
+                            else "unknown"
+                        ),
                         f"Email: {rec.email or 'unknown'}",
                     ]
                 ),
             ),
-            section("Relationship Context", bullets([
-                f"Identity confidence: {rec.identity_confidence}"
-                + (" — **needs review**" if rec.needs_review else "")
-            ])),
+            section(
+                "Relationship Context",
+                bullets(
+                    [
+                        f"Identity confidence: {rec.identity_confidence}"
+                        + (" — **needs review**" if rec.needs_review else "")
+                    ]
+                ),
+            ),
             section("Succession Signals", signals),
             section("Evidence", bullets([f'"{e}"' for e in rec.evidence])),
-            section("Conversation History", bullets(
-                [wikilink(transcript_note_name(d, t), t) for d, t in rec.transcripts]
-            )),
-            section("Next Actions", bullets(
-                [a for a in [profile.get("next_best_action")] if a]
-            )),
+            section(
+                "Conversation History",
+                bullets([wikilink(transcript_note_name(d, t), t) for d, t in rec.transcripts]),
+            ),
+            section("Next Actions", bullets([a for a in [profile.get("next_best_action")] if a])),
             section("CRM Links", []),
         ]
     ).strip()
     return slugify(rec.name), fm, managed
 
 
-def company_note(rec: CompanyRecord, llm_provider: str) -> tuple[str, list[tuple[str, object]], str]:
+def company_note(
+    rec: CompanyRecord, llm_provider: str
+) -> tuple[str, list[tuple[str, object]], str]:
     fm = _base_frontmatter("company", llm_provider) + [
         ("name", rec.name),
         ("industry", rec.industry),
@@ -147,18 +164,18 @@ def company_note(rec: CompanyRecord, llm_provider: str) -> tuple[str, list[tuple
         [
             f"# {rec.name}",
             "",
-            section("Snapshot", bullets(
-                [
-                    f"Website: {rec.website or 'unknown'}",
-                    f"Industry: {rec.industry or 'unknown'}",
-                    f"Location: {rec.location or 'unknown'}",
-                ]
-            )),
-            section("Ownership / Succession Context",
-                    [rec.ownership_context or "_unknown_"]),
-            section("People", bullets(
-                [wikilink(slugify(n), n) for n in rec.people_names]
-            )),
+            section(
+                "Snapshot",
+                bullets(
+                    [
+                        f"Website: {rec.website or 'unknown'}",
+                        f"Industry: {rec.industry or 'unknown'}",
+                        f"Location: {rec.location or 'unknown'}",
+                    ]
+                ),
+            ),
+            section("Ownership / Succession Context", [rec.ownership_context or "_unknown_"]),
+            section("People", bullets([wikilink(slugify(n), n) for n in rec.people_names])),
         ]
     ).strip()
     return slugify(rec.name), fm, managed
@@ -185,20 +202,23 @@ def opportunity_note(
         [
             f"# {rec.name}",
             "",
-            section("Current Read", bullets(
-                [
-                    f"Stage: {rec.stage} | lead type: {rec.lead_type}"
-                    f" | score: {rec.succession_signal_score}",
-                    f"Urgency: {rec.urgency} | timing: {rec.timing_window}",
-                ]
-            )),
-            section("Next Best Action", bullets(
-                [a for a in [rec.next_action] if a] or ["_none_"]
-            )),
-            section("Links", bullets(
-                [wikilink(slugify(n), n) for n in
-                 [rec.person_name, rec.company_name] if n]
-            )),
+            section(
+                "Current Read",
+                bullets(
+                    [
+                        f"Stage: {rec.stage} | lead type: {rec.lead_type}"
+                        f" | score: {rec.succession_signal_score}",
+                        f"Urgency: {rec.urgency} | timing: {rec.timing_window}",
+                    ]
+                ),
+            ),
+            section("Next Best Action", bullets([a for a in [rec.next_action] if a] or ["_none_"])),
+            section(
+                "Links",
+                bullets(
+                    [wikilink(slugify(n), n) for n in [rec.person_name, rec.company_name] if n]
+                ),
+            ),
         ]
     ).strip()
     return slugify(rec.name), fm, managed

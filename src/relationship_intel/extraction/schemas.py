@@ -5,12 +5,12 @@ needs_review, llm_provider/lens_version provenance, approval_status, review_stat
 from __future__ import annotations
 
 from datetime import date
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class LeadType(str, Enum):
+class LeadType(StrEnum):
     cold = "cold"
     warm = "warm"
     active = "active"
@@ -20,7 +20,7 @@ class LeadType(str, Enum):
     unknown = "unknown"
 
 
-class Stage(str, Enum):
+class Stage(StrEnum):
     new = "new"
     nurture = "nurture"
     discovery = "discovery"
@@ -32,14 +32,14 @@ class Stage(str, Enum):
     not_fit = "not_fit"
 
 
-class Urgency(str, Enum):
+class Urgency(StrEnum):
     low = "low"
     medium = "medium"
     high = "high"
     unknown = "unknown"
 
 
-class TimingWindow(str, Enum):
+class TimingWindow(StrEnum):
     immediate = "immediate"
     months_0_3 = "0_3_months"
     months_3_6 = "3_6_months"
@@ -48,13 +48,13 @@ class TimingWindow(str, Enum):
     unknown = "unknown"
 
 
-class IdentityConfidence(str, Enum):
+class IdentityConfidence(StrEnum):
     high = "high"
     medium = "medium"
     low = "low"
 
 
-class ReviewStatus(str, Enum):
+class ReviewStatus(StrEnum):
     """ORD-0003 review-status model. AI synthesis defaults to unreviewed."""
 
     unreviewed = "unreviewed"
@@ -63,7 +63,7 @@ class ReviewStatus(str, Enum):
     confirmed = "confirmed"
 
 
-class ApprovalStatus(str, Enum):
+class ApprovalStatus(StrEnum):
     """Phase 0: everything stays `proposed`; CRM upserts are pre-authorized-additive."""
 
     proposed = "proposed"

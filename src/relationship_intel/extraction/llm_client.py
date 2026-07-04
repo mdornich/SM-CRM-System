@@ -238,8 +238,7 @@ class MockLLMClient(LLMClient):
         score = min(score, 100)
 
         evidence = (
-            referral_sents + exit_sents + timing_sents + pain_sents + buying_sents
-            + followup_sents
+            referral_sents + exit_sents + timing_sents + pain_sents + buying_sents + followup_sents
         )
         if info.get("identity_evidence"):
             evidence = evidence + [info["identity_evidence"]]
