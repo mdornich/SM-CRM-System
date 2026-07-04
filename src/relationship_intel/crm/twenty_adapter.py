@@ -224,9 +224,7 @@ class TwentyCRMAdapter(CRMAdapter):
             "GET", f"/{objects}", params={"filter": f"{id_field}[eq]:{record_id}", "limit": 1}
         )
         if not payload.get("data", {}).get(objects, []):
-            self._request(
-                "POST", f"/{objects}", json={id_field: record_id, **_target_link(ref)}
-            )
+            self._request("POST", f"/{objects}", json={id_field: record_id, **_target_link(ref)})
 
     def tag_record(self, ref: CRMRef, tags: list[str]) -> None:
         # Twenty has no first-class tag object on core records; Phase 2 decision is

@@ -7,7 +7,7 @@ from pathlib import Path
 from relationship_intel.config import Settings, _bool, load_settings
 
 
-def test_defaults_resolve_without_env(monkeypatch):
+def test_defaults_resolve_without_env(monkeypatch, tmp_path):
     for var in (
         "LLM_PROVIDER",
         "CRM_PROVIDER",
@@ -18,7 +18,11 @@ def test_defaults_resolve_without_env(monkeypatch):
         "STALL_THRESHOLD_DAYS",
     ):
         monkeypatch.delenv(var, raising=False)
-    settings = load_settings()
+    # Point at an empty env file so the developer's real repo .env (which may
+    # legitimately set CRM_PROVIDER=twenty etc.) cannot leak into this test.
+    empty_env = tmp_path / "empty.env"
+    empty_env.touch()
+    settings = load_settings(env_file=empty_env)
     assert settings.llm_provider == "mock"
     assert settings.crm_provider == "mock"
     assert settings.twenty_api_url == "http://localhost:3002"
