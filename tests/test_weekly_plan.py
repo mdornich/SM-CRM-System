@@ -119,6 +119,21 @@ def test_drafts_are_marked_and_items_carry_links(tmp_path):
     assert DRAFT_MARKER in markdown
 
 
+def test_flagged_identity_lands_in_needs_review_group(tmp_path):
+    repo = Repository(connect(tmp_path / "t.db"))
+    person_id = _seed_person(repo, "Jane Doe", {}, 2, "t1")
+    repo.conn.execute("UPDATE people SET needs_review = 1 WHERE id = ?", (person_id,))
+    repo.conn.commit()
+    plan = _plan(repo)
+    flagged = [i["person_name"] for i in plan["groups"]["needs_review"]]
+    assert flagged == ["Jane Doe"]
+    assert plan["groups"]["needs_review"][0]["needs_review"] is True
+    # And the rendered section actually lists her (not just the heading).
+    markdown = to_markdown(plan)
+    needs_review_section = markdown.split("## Needs Review")[1].split("## Risks")[0]
+    assert "Jane Doe" in needs_review_section
+
+
 def test_not_fit_people_never_enter_the_plan(settings, samples_dir):
     pipeline.run_ingest(settings, samples_dir)
     plan = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))

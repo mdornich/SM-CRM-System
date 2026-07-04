@@ -17,6 +17,7 @@ Secrets never reach logs; requests are logged as method+path only."""
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 
@@ -28,9 +29,23 @@ from relationship_intel.crm.base import (
     PipelineItem,
     TaskPayload,
 )
-from relationship_intel.intake.local_folder import NotConfiguredError
+from relationship_intel.errors import NotConfiguredError
 
 logger = logging.getLogger(__name__)
+
+# Twenty's filter grammar treats commas as predicate separators inside and()/or()
+# wrappers and tracks parens as grouping (verified against the fork's
+# parse-filter-content.util.ts). Person-controlled values ("Smith, Jr.",
+# "Acme (Holdings)") must never be interpolated into a composite filter — when a
+# value can't be expressed safely we skip the lookup and fall through to create.
+_DSL_UNSAFE = re.compile(r"[,()\[\]]")
+
+
+def _filter_safe(value: str | None) -> str | None:
+    if not value or _DSL_UNSAFE.search(value):
+        return None
+    return value
+
 
 # Spec stage vocabulary -> Twenty default pipeline stages. Unmapped spec stages
 # (not_fit, stalled, closed_lost) intentionally do not create opportunities.
@@ -86,17 +101,20 @@ class TwentyCRMAdapter(CRMAdapter):
 
     def find_or_create_contact(self, person: dict) -> CRMRef:
         email = (person.get("email") or "").lower()
-        if email:
-            existing = self._find_one("people", f"emails.primaryEmail[eq]:{email}")
+        safe_email = _filter_safe(email)
+        if safe_email:
+            existing = self._find_one("people", f"emails.primaryEmail[eq]:{safe_email}")
             if existing:
                 return self._ref("person", existing)
         first, _, last = person["name"].partition(" ")
-        existing = self._find_one(
-            "people",
-            f"and(name.firstName[eq]:{first},name.lastName[eq]:{last or first})",
-        )
-        if existing:
-            return self._ref("person", existing)
+        safe_first, safe_last = _filter_safe(first), _filter_safe(last or first)
+        if safe_first and safe_last:
+            existing = self._find_one(
+                "people",
+                f"and(name.firstName[eq]:{safe_first},name.lastName[eq]:{safe_last})",
+            )
+            if existing:
+                return self._ref("person", existing)
         body: dict = {"name": {"firstName": first, "lastName": last or first}}
         if email:
             body["emails"] = {"primaryEmail": email}

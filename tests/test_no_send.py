@@ -20,6 +20,14 @@ FORBIDDEN_TOKENS = (
     "sendgrid",
     "mailgun",
     "import requests",
+    "from requests",
+    # stdlib channels that could smuggle outbound traffic past the httpx allowlist
+    "urllib",
+    "http.client",
+    "import socket",
+    "ftplib",
+    "subprocess",
+    "os.system",
 )
 
 # The ONLY permitted network surfaces (spec §3.8: no sending code exists anywhere).

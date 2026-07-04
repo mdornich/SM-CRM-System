@@ -60,6 +60,29 @@ def test_company_conflict_creates_new_person_with_review_flag(tmp_path):
     id1, _ = repo.resolve_person(Person(name="Jane Doe"), acme)
     id2, created = repo.resolve_person(Person(name="Jane Doe"), globex)
     assert created and id1 != id2
+    # Identical name at a conflicting company is exactly what review must catch
+    # (rule 4 includes edit-distance 0).
+    row = repo.conn.execute("SELECT needs_review FROM people WHERE id = ?", (id2,)).fetchone()
+    assert row["needs_review"] == 1
+    # And the two people must never share a vault note slug.
+    slugs = repo.person_slugs()
+    assert slugs[id1] != slugs[id2]
+    assert slugs[id1] == "jane-doe"  # first keeps the stable base slug
+
+
+def test_learning_company_later_upgrades_opportunity_instead_of_duplicating(tmp_path):
+    repo = _repo(tmp_path)
+    person_id, _ = repo.resolve_person(Person(name="Bob Smith"), None)
+    profile = {"stage": "discovery", "lead_type": "warm", "succession_signal_score": 60}
+    first = repo.upsert_opportunity("Bob Smith — Succession", person_id, None, profile, "James")
+    company_id, _ = repo.resolve_company(Company(name="Smith HVAC"))
+    second = repo.upsert_opportunity(
+        "Smith HVAC — Bob Smith — Succession", person_id, company_id, profile, "James"
+    )
+    assert first == second
+    rows = repo.conn.execute("SELECT company_id FROM opportunities").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["company_id"] == company_id
 
 
 def test_near_duplicate_name_flagged_needs_review(tmp_path):

@@ -15,6 +15,7 @@ import sqlite3
 
 from relationship_intel.extraction.schemas import Company, Person
 from relationship_intel.store.models import CompanyRecord, OpportunityRecord, PersonRecord
+from relationship_intel.util.slugs import assign_slugs
 
 _HONORIFICS = {"mr", "mrs", "ms", "dr", "prof", "sir"}
 _COMPANY_SUFFIXES = {"inc", "llc", "co", "corp", "ltd", "company", "corporation", "group"}
@@ -56,6 +57,23 @@ class Repository:
         self.conn = conn
 
     # -- transcripts ---------------------------------------------------------
+
+    def transcript_seen(self, transcript_hash: str) -> bool:
+        return (
+            self.conn.execute(
+                "SELECT 1 FROM transcripts WHERE transcript_hash = ?", (transcript_hash,)
+            ).fetchone()
+            is not None
+        )
+
+    def delete_transcript(self, transcript_id: int) -> None:
+        """Cleanup for a failed ingest so the transcript is retryable — the only
+        deletion in the store, and it never touches people/companies (upsert-safe
+        on retry)."""
+        self.conn.execute("DELETE FROM interactions WHERE transcript_id = ?", (transcript_id,))
+        self.conn.execute("DELETE FROM lead_profiles WHERE transcript_id = ?", (transcript_id,))
+        self.conn.execute("DELETE FROM transcripts WHERE id = ?", (transcript_id,))
+        self.conn.commit()
 
     def register_transcript(self, raw, store_raw: bool = True) -> tuple[int, bool]:
         row = self.conn.execute(
@@ -161,8 +179,11 @@ class Repository:
                 return row["id"], False
 
         # Rule 4: new person; flag near-duplicates (edit distance <= 2) for review.
+        # Distance 0 is included deliberately: reaching rule 4 with an identical
+        # normalized name means a company CONFLICT forced a new record — exactly
+        # the ambiguity a human must review.
         needs_review = any(
-            0 < edit_distance(normalized, existing["normalized_name"]) <= 2
+            edit_distance(normalized, existing["normalized_name"]) <= 2
             for existing in self.conn.execute("SELECT normalized_name FROM people").fetchall()
         )
         cur = self.conn.execute(
@@ -248,6 +269,19 @@ class Repository:
             "SELECT id FROM opportunities WHERE person_id IS ? AND company_id IS ?",
             (person_id, company_id),
         ).fetchone()
+        if row is None and company_id is not None:
+            # A person's company became known in a later transcript: upgrade their
+            # existing company-less opportunity instead of creating a duplicate
+            # (UNIQUE(person_id, company_id) cannot catch the NULL->value transition).
+            row = self.conn.execute(
+                "SELECT id FROM opportunities WHERE person_id IS ? AND company_id IS NULL",
+                (person_id,),
+            ).fetchone()
+            if row:
+                self.conn.execute(
+                    "UPDATE opportunities SET company_id = ? WHERE id = ?",
+                    (company_id, row["id"]),
+                )
         values = (
             profile.get("stage", "new"),
             profile.get("lead_type", "unknown"),
@@ -277,6 +311,14 @@ class Repository:
         return cur.lastrowid
 
     # -- crm sync state --------------------------------------------------------
+
+    def any_crm_ref(self, object_type: str, local_id: int):
+        """First sync ref for a record across providers (weekly-plan CRM links)."""
+        return self.conn.execute(
+            "SELECT provider, crm_id, url FROM crm_sync_state"
+            " WHERE object_type = ? AND local_id = ? ORDER BY provider LIMIT 1",
+            (object_type, local_id),
+        ).fetchone()
 
     def get_sync_state(self, provider: str, object_type: str, local_id: int):
         return self.conn.execute(
@@ -316,7 +358,25 @@ class Repository:
 
     # -- read side for writer/planner -------------------------------------------
 
+    def person_slugs(self) -> dict[int, str]:
+        return assign_slugs(
+            [
+                (r["id"], r["name"])
+                for r in self.conn.execute("SELECT id, name FROM people ORDER BY id").fetchall()
+            ]
+        )
+
+    def company_slugs(self) -> dict[int, str]:
+        return assign_slugs(
+            [
+                (r["id"], r["name"])
+                for r in self.conn.execute("SELECT id, name FROM companies ORDER BY id").fetchall()
+            ]
+        )
+
     def people_records(self) -> list[PersonRecord]:
+        person_slugs = self.person_slugs()
+        company_slugs = self.company_slugs()
         records = []
         for row in self.conn.execute(
             "SELECT p.*, c.name AS company_name FROM people p"
@@ -332,15 +392,18 @@ class Repository:
                 (row["id"],),
             ).fetchone()
             evidence: list[str] = []
-            transcripts: list[tuple[str | None, str]] = []
+            transcripts: list[tuple[str | None, str, str]] = []
             for i_row in self.conn.execute(
-                "SELECT i.evidence_json, t.title, t.meeting_date FROM interactions i"
+                "SELECT i.evidence_json, t.title, t.meeting_date, t.transcript_hash"
+                " FROM interactions i"
                 " JOIN transcripts t ON t.id = i.transcript_id"
                 " WHERE i.person_id = ? ORDER BY i.id",
                 (row["id"],),
             ).fetchall():
                 evidence.extend(json.loads(i_row["evidence_json"]))
-                transcripts.append((i_row["meeting_date"], i_row["title"]))
+                transcripts.append(
+                    (i_row["meeting_date"], i_row["title"], i_row["transcript_hash"])
+                )
             records.append(
                 PersonRecord(
                     id=row["id"],
@@ -351,6 +414,8 @@ class Repository:
                     company_name=row["company_name"],
                     identity_confidence=row["identity_confidence"],
                     needs_review=bool(row["needs_review"]),
+                    slug=person_slugs[row["id"]],
+                    company_slug=company_slugs.get(row["company_id"]),
                     last_interaction=last["d"] if last else None,
                     profile=json.loads(profile_row["profile_json"]) if profile_row else None,
                     evidence=evidence,
@@ -360,12 +425,15 @@ class Repository:
         return records
 
     def company_records(self) -> list[CompanyRecord]:
+        person_slugs = self.person_slugs()
+        company_slugs = self.company_slugs()
         records = []
         for row in self.conn.execute("SELECT * FROM companies ORDER BY id").fetchall():
-            names = [
-                r["name"]
+            people = [
+                (person_slugs[r["id"]], r["name"])
                 for r in self.conn.execute(
-                    "SELECT name FROM people WHERE company_id = ? ORDER BY id", (row["id"],)
+                    "SELECT id, name FROM people WHERE company_id = ? ORDER BY id",
+                    (row["id"],),
                 ).fetchall()
             ]
             records.append(
@@ -377,18 +445,23 @@ class Repository:
                     industry=row["industry"],
                     location=row["location"],
                     ownership_context=row["ownership_context"],
-                    people_names=names,
+                    slug=company_slugs[row["id"]],
+                    people=people,
                 )
             )
         return records
 
     def opportunity_records(self) -> list[OpportunityRecord]:
-        records = []
-        for row in self.conn.execute(
+        person_slugs = self.person_slugs()
+        company_slugs = self.company_slugs()
+        rows = self.conn.execute(
             "SELECT o.*, p.name AS person_name, c.name AS company_name FROM opportunities o"
             " LEFT JOIN people p ON p.id = o.person_id"
             " LEFT JOIN companies c ON c.id = o.company_id ORDER BY o.id"
-        ).fetchall():
+        ).fetchall()
+        opp_slugs = assign_slugs([(r["id"], r["name"]) for r in rows])
+        records = []
+        for row in rows:
             records.append(
                 OpportunityRecord(
                     id=row["id"],
@@ -405,6 +478,9 @@ class Repository:
                     owner=row["owner"],
                     next_action=row["next_action"],
                     next_action_due=row["next_action_due"],
+                    slug=opp_slugs[row["id"]],
+                    person_slug=person_slugs.get(row["person_id"]),
+                    company_slug=company_slugs.get(row["company_id"]),
                 )
             )
         return records

@@ -14,7 +14,7 @@ import json
 from datetime import date, timedelta
 
 from relationship_intel.extraction.schemas import PROSPECT_LEAD_TYPES
-from relationship_intel.obsidian.links import slugify, transcript_note_name, wikilink
+from relationship_intel.obsidian.links import transcript_note_name, wikilink
 from relationship_intel.planning.message_drafts import draft_for
 from relationship_intel.store.repository import Repository
 from relationship_intel.util.dates import parse_iso_date, week_label
@@ -78,7 +78,9 @@ def build_plan(
         cadence_days = _CADENCE_DAYS.get(profile.get("recommended_cadence") or "", 30)
 
         evidence = profile.get("evidence_snippets") or rec.evidence
-        transcript_links = [wikilink(transcript_note_name(d, t), t) for d, t in rec.transcripts]
+        transcript_links = [
+            wikilink(transcript_note_name(d, t, h), t) for d, t, h in rec.transcripts
+        ]
         item = {
             "person_name": rec.name,
             "company_name": rec.company_name,
@@ -95,7 +97,7 @@ def build_plan(
             "next_action_due_window": profile.get("next_action_due_window"),
             "suggested_message": draft_for(rec.name, lead_type, profile.get("suggested_message")),
             "evidence_links": transcript_links,
-            "obsidian_link": wikilink(slugify(rec.name), rec.name),
+            "obsidian_link": wikilink(rec.slug, rec.name),
             "crm_link": _crm_link(repo, rec.id),
             "needs_review": rec.needs_review or rec.identity_confidence == "medium",
             "approval_status": "proposed",
@@ -151,11 +153,7 @@ def build_plan(
 
 
 def _crm_link(repo: Repository, person_id: int) -> str | None:
-    row = repo.conn.execute(
-        "SELECT provider, crm_id, url FROM crm_sync_state"
-        " WHERE object_type = 'person' AND local_id = ? LIMIT 1",
-        (person_id,),
-    ).fetchone()
+    row = repo.any_crm_ref("person", person_id)
     if not row:
         return None
     return row["url"] or f"{row['provider']}:{row['crm_id']}"

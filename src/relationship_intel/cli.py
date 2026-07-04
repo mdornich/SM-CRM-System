@@ -17,7 +17,7 @@ from pathlib import Path
 
 from relationship_intel import pipeline
 from relationship_intel.config import load_settings
-from relationship_intel.intake.local_folder import NotConfiguredError
+from relationship_intel.errors import NotConfiguredError
 from relationship_intel.util.dates import parse_iso_date
 
 

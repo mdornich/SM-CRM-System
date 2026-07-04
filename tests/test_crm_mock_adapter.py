@@ -52,6 +52,37 @@ def test_crm_notes_contain_summaries_never_evidence(settings, samples_dir):
         assert "relationship-intelligence/people/" in note["body"]  # vault link back
 
 
+def test_failed_note_attach_is_retried_on_next_sync(settings, samples_dir):
+    """Note/task delivery is tracked independently of person sync state — a
+    failure after the person record lands must not be skipped forever."""
+    from relationship_intel import pipeline as pl
+    from relationship_intel.crm.sync import sync_to_crm
+
+    pl.run_ingest(settings, samples_dir)
+    repo = pl.open_repo(settings)
+
+    class FlakyAdapter(MockCRMAdapter):
+        fail_notes = True
+
+        def attach_note(self, ref, note):
+            if self.fail_notes:
+                raise RuntimeError("simulated CRM outage during attach_note")
+            return super().attach_note(ref, note)
+
+    adapter = FlakyAdapter(settings.mock_crm_path)
+    try:
+        sync_to_crm(repo, adapter, "James")
+        raise AssertionError("expected simulated failure")
+    except RuntimeError:
+        pass
+
+    adapter.fail_notes = False
+    stats = sync_to_crm(repo, adapter, "James")
+    assert stats["notes"] > 0  # retried and delivered, not skipped forever
+    notes = json.loads((settings.mock_crm_path / "notes.json").read_text())
+    assert notes
+
+
 def test_pipeline_items_round_trip(settings, samples_dir):
     pipeline.run_ingest(settings, samples_dir)
     pipeline.run_sync(settings, "mock")

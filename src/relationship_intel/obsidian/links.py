@@ -1,20 +1,18 @@
-"""Slug + wikilink helpers. Slugs are stable (derived from names only) so links
-stay valid across re-runs."""
+"""Wikilink + note-name helpers. Slugs are computed centrally (util/slugs +
+Repository) so collisions are handled in one place; transcript note names carry
+a content-hash suffix so recurring meeting titles can never overwrite each other."""
 
 from __future__ import annotations
 
-import re
+from relationship_intel.util.slugs import slugify
 
-
-def slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "unnamed"
+__all__ = ["slugify", "transcript_note_name", "wikilink"]
 
 
 def wikilink(target: str, label: str | None = None) -> str:
     return f"[[{target}|{label}]]" if label else f"[[{target}]]"
 
 
-def transcript_note_name(meeting_date: str | None, title: str) -> str:
+def transcript_note_name(meeting_date: str | None, title: str, transcript_hash: str) -> str:
     prefix = f"{meeting_date}-" if meeting_date else ""
-    return f"{prefix}{slugify(title)}"
+    return f"{prefix}{slugify(title)}-{transcript_hash[:8]}"

@@ -11,7 +11,8 @@ local folder remains the ingestion path."""
 
 from __future__ import annotations
 
-from relationship_intel.intake.local_folder import NotConfiguredError, RawTranscript
+from relationship_intel.errors import NotConfiguredError
+from relationship_intel.intake.local_folder import RawTranscript
 
 
 class GranolaAPISource:

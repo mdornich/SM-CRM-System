@@ -89,6 +89,10 @@ class MockCRMAdapter(CRMAdapter):
                 "body": note.body,
             }
             self._save("notes", data)
+        elif data[key]["body"] != note.body:
+            # Re-delivery after a profile change updates the note in place.
+            data[key]["body"] = note.body
+            self._save("notes", data)
         return CRMRef(self.provider, "note", data[key]["id"])
 
     def create_task(self, ref: CRMRef, task: TaskPayload) -> CRMRef:

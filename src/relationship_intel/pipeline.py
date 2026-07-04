@@ -3,6 +3,7 @@ the stages directly). Logging references transcript hashes only — never bodies
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 from pathlib import Path
@@ -16,13 +17,14 @@ from relationship_intel.extraction.schemas import (
     PROSPECT_LEAD_TYPES,
     ExtractedRelationshipIntelligence,
 )
-from relationship_intel.intake.local_folder import LocalFolderSource
+from relationship_intel.intake.local_folder import LocalFolderSource, RawTranscript
 from relationship_intel.obsidian import templates
 from relationship_intel.obsidian.writer import VaultWriter
 from relationship_intel.planning import contract, weekly_plan
 from relationship_intel.store.db import connect
 from relationship_intel.store.repository import Repository
 from relationship_intel.util.dates import monday_of_week
+from relationship_intel.util.slugs import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +69,28 @@ def run_ingest(settings: Settings, source: Path, vault: Path | None = None) -> d
     extractor = Extractor(settings)
 
     stats = {"ingested": 0, "skipped_duplicates": 0}
+    processed: list[tuple[RawTranscript, ExtractedRelationshipIntelligence, list]] = []
     for raw in LocalFolderSource(source).iter_transcripts():
-        transcript_id, created = repo.register_transcript(
-            raw, store_raw=settings.store_raw_transcripts
-        )
-        if not created:
+        # Dedupe first; extraction is pure, so nothing is persisted until it succeeds.
+        if repo.transcript_seen(raw.transcript_hash):
             logger.info("Skipping duplicate transcript hash=%s", raw.transcript_hash[:12])
             stats["skipped_duplicates"] += 1
             continue
         eri = extractor.extract(raw)
-        _persist(repo, transcript_id, raw, eri, settings)
-        name, fm, managed = templates.transcript_note(raw, eri, settings.store_raw_transcripts)
-        writer.write_note("transcripts", name, fm, managed)
+        transcript_id, _ = repo.register_transcript(raw, store_raw=settings.store_raw_transcripts)
+        try:
+            opportunity_ids = _persist(repo, transcript_id, raw, eri, settings)
+        except Exception:
+            # Make the transcript retryable instead of stranding it as a false
+            # duplicate; people/companies already upserted are retry-safe.
+            repo.delete_transcript(transcript_id)
+            raise
+        processed.append((raw, eri, opportunity_ids))
         stats["ingested"] += 1
 
+    # Notes are written after all persists so cross-links use the final
+    # collision-aware slugs.
+    _write_transcript_notes(repo, writer, processed, settings)
     _write_entity_notes(repo, writer, settings.llm_provider)
     return stats
 
@@ -88,10 +98,10 @@ def run_ingest(settings: Settings, source: Path, vault: Path | None = None) -> d
 def _persist(
     repo: Repository,
     transcript_id: int,
-    raw,
+    raw: RawTranscript,
     eri: ExtractedRelationshipIntelligence,
     settings: Settings,
-) -> None:
+) -> list[int]:
     company_ids: dict[str, int] = {}
     for company in eri.companies:
         company_ids[company.name], _ = repo.resolve_company(company)
@@ -99,6 +109,7 @@ def _persist(
     profiles_by_person = {p.person_name: p for p in eri.lead_profiles}
     meeting_date = raw.meeting_date.isoformat() if raw.meeting_date else None
 
+    opportunity_ids: list[int] = []
     for person in eri.people:
         profile = profiles_by_person.get(person.name)
         company_id = company_ids.get(profile.company_name) if profile else None
@@ -114,14 +125,44 @@ def _persist(
                 eri.llm_provider,
             )
             if profile.lead_type in PROSPECT_LEAD_TYPES:
-                anchor = profile.company_name or person.name
-                repo.upsert_opportunity(
-                    f"{anchor} — Succession",
-                    person_id,
-                    company_id,
-                    profile.model_dump(mode="json"),
-                    raw.owner or settings.default_owner,
+                # Person is always part of the name: co-owner prospects at one
+                # company must never collide on the opportunity name.
+                anchor = " — ".join(part for part in (profile.company_name, person.name) if part)
+                opportunity_ids.append(
+                    repo.upsert_opportunity(
+                        f"{anchor} — Succession",
+                        person_id,
+                        company_id,
+                        profile.model_dump(mode="json"),
+                        raw.owner or settings.default_owner,
+                    )
                 )
+    return opportunity_ids
+
+
+def _write_transcript_notes(
+    repo: Repository, writer: VaultWriter, processed: list, settings: Settings
+) -> None:
+    if not processed:
+        return
+    person_slug_by_name = {rec.name: rec.slug for rec in reversed(repo.people_records())}
+    company_slug_by_name = {rec.name: rec.slug for rec in reversed(repo.company_records())}
+    opp_by_id = {rec.id: rec for rec in repo.opportunity_records()}
+    for raw, eri, opportunity_ids in processed:
+        opportunity_links = [
+            (opp_by_id[oid].slug, opp_by_id[oid].name)
+            for oid in opportunity_ids
+            if oid in opp_by_id
+        ]
+        name, fm, managed = templates.transcript_note(
+            raw,
+            eri,
+            settings.store_raw_transcripts,
+            person_slug_by_name,
+            company_slug_by_name,
+            opportunity_links,
+        )
+        writer.write_note("transcripts", name, fm, managed)
 
 
 def _write_entity_notes(repo: Repository, writer: VaultWriter, llm_provider: str) -> None:
@@ -140,19 +181,19 @@ def _write_entity_notes(repo: Repository, writer: VaultWriter, llm_provider: str
         writer.write_note("opportunities", name, fm, managed)
 
     writer.write_jsonl_index(
-        "people", templates.index_lines(people, ["id", "name", "email", "company_name"])
+        "people", templates.index_lines(people, ["id", "name", "email", "company_name", "slug"])
     )
     writer.write_jsonl_index(
-        "companies", templates.index_lines(companies, ["id", "name", "domain"])
+        "companies", templates.index_lines(companies, ["id", "name", "domain", "slug"])
     )
     writer.write_jsonl_index(
         "opportunities",
-        templates.index_lines(opportunities, ["id", "name", "stage", "lead_type"]),
+        templates.index_lines(opportunities, ["id", "name", "stage", "lead_type", "slug"]),
     )
     writer.write_jsonl_index(
         "transcript-index",
         [
-            templates.json.dumps(
+            json.dumps(
                 {
                     "id": row["id"],
                     "title": row["title"],
@@ -196,7 +237,7 @@ def run_weekly_plan(
     )
     repo.save_plan(owner, plan["week_start"], weekly_plan.to_json(plan))
 
-    note_name = f"{plan['week_label']}-{owner.lower()}-succession-plan"
+    note_name = f"{plan['week_label']}-{slugify(owner)}-succession-plan"
     fm = [
         ("type", "weekly_plan"),
         ("generated_by", templates.GENERATED_BY),
@@ -215,6 +256,6 @@ def run_weekly_plan(
     report = contract.build_report(plan)
     writer.write_report(
         f"CRM-{plan['generated_at']}.json",
-        templates.json.dumps(report, indent=2, sort_keys=True) + "\n",
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
     )
     return plan

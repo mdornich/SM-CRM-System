@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 import re
 
+from relationship_intel.errors import NotConfiguredError
 from relationship_intel.extraction import succession_lens as lens
-from relationship_intel.intake.local_folder import NotConfiguredError
 
 _SPEAKER_RE = re.compile(r"^([A-Z][\w.'-]*(?: [A-Z][\w.'-]*)+):\s*(.*)$")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")

@@ -22,7 +22,9 @@ def test_notes_render_with_frontmatter_and_wikilinks(settings, samples_dir):
     assert "llm_provider: mock" in bob
     assert "[[smith-hvac|Smith HVAC]]" in bob
     assert BEGIN in bob and END in bob
-    transcript = (root / "transcripts" / "2026-06-30-bob-smith-succession-intro.md").read_text()
+    transcript_paths = list((root / "transcripts").glob("2026-06-30-bob-smith-*.md"))
+    assert len(transcript_paths) == 1
+    transcript = transcript_paths[0].read_text()
     assert "[[bob-smith|Bob Smith]]" in transcript
     assert "transcript_hash:" in transcript
 
@@ -80,12 +82,45 @@ def test_store_raw_transcripts_false_omits_body_keeps_evidence(tmp_path, samples
     )
     pipeline.run_ingest(settings, samples_dir)
     root = settings.obsidian_vault_path / "relationship-intelligence"
-    transcript = (root / "transcripts" / "2026-06-30-bob-smith-succession-intro.md").read_text()
+    transcript = next((root / "transcripts").glob("2026-06-30-bob-smith-*.md")).read_text()
     assert "Twenty-two years running this company" not in transcript
     assert "storage disabled" in transcript
     # Evidence snippets are always kept — they are the audit trail (spec §7).
     bob = (root / "people" / "bob-smith.md").read_text()
     assert "next chapter" in bob
+
+
+def test_literal_marker_text_in_content_cannot_freeze_note(tmp_path):
+    """A transcript quoting the ri: markers must not corrupt marker parsing."""
+    writer = VaultWriter(tmp_path)
+    hostile = f"# Test\nquoting {BEGIN} and {END} literally\nv1"
+    path = writer.write_note("transcripts", "hostile", FM, hostile)
+    text = path.read_text()
+    assert text.count(BEGIN) == 1 and text.count(END) == 1
+    # The note must remain updatable on a subsequent changed write.
+    writer.write_note("transcripts", "hostile", FM, hostile.replace("v1", "v2"))
+    updated = path.read_text()
+    assert "v2" in updated and "v1" not in updated
+
+
+def test_same_name_people_get_distinct_notes(tmp_path, settings):
+    """Two real people sharing a name must never collide on one note path."""
+    from relationship_intel import pipeline
+    from relationship_intel.extraction.schemas import Company, Person
+    from relationship_intel.obsidian.writer import VaultWriter as VW
+    from relationship_intel.store.db import connect
+    from relationship_intel.store.repository import Repository
+
+    repo = Repository(connect(tmp_path / "t.db"))
+    acme, _ = repo.resolve_company(Company(name="Acme"))
+    globex, _ = repo.resolve_company(Company(name="Globex"))
+    repo.resolve_person(Person(name="Jane Doe"), acme)
+    repo.resolve_person(Person(name="Jane Doe"), globex)
+
+    writer = VW(tmp_path / "vault")
+    pipeline._write_entity_notes(repo, writer, "mock")
+    notes = sorted(p.name for p in (writer.root / "people").glob("jane-doe*.md"))
+    assert len(notes) == 2
 
 
 def test_jsonl_indexes_are_valid(settings, samples_dir):

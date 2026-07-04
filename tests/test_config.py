@@ -1,0 +1,68 @@
+"""Settings/env parsing (plan U1 scenarios)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from relationship_intel.config import Settings, _bool, load_settings
+
+
+def test_defaults_resolve_without_env(monkeypatch):
+    for var in (
+        "LLM_PROVIDER",
+        "CRM_PROVIDER",
+        "OBSIDIAN_VAULT_PATH",
+        "STORE_RAW_TRANSCRIPTS",
+        "TWENTY_API_URL",
+        "DEFAULT_OWNER",
+        "STALL_THRESHOLD_DAYS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    settings = load_settings()
+    assert settings.llm_provider == "mock"
+    assert settings.crm_provider == "mock"
+    assert settings.twenty_api_url == "http://localhost:3002"
+    assert settings.store_raw_transcripts is True
+    assert settings.default_owner == "James"
+    assert settings.stall_threshold_days == 21
+
+
+def test_env_overrides_win(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("OBSIDIAN_VAULT_PATH", "/tmp/elsewhere")
+    monkeypatch.setenv("STALL_THRESHOLD_DAYS", "30")
+    settings = load_settings()
+    assert settings.llm_provider == "anthropic"
+    assert settings.obsidian_vault_path == Path("/tmp/elsewhere")
+    assert settings.stall_threshold_days == 30
+
+
+def test_store_raw_transcripts_boolean_forms(monkeypatch):
+    for value, expected in (
+        ("false", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("", True),
+    ):
+        monkeypatch.setenv("STORE_RAW_TRANSCRIPTS", value)
+        assert load_settings().store_raw_transcripts is expected, value
+
+
+def test_bool_helper_default_only_on_missing_or_blank():
+    assert _bool(None, True) is True
+    assert _bool("  ", False) is False
+    assert _bool("TRUE", False) is True
+    assert _bool("nonsense", True) is False
+
+
+def test_settings_frozen():
+    settings = Settings()
+    try:
+        settings.llm_provider = "other"  # type: ignore[misc]
+        raise AssertionError("Settings should be frozen")
+    except AttributeError:
+        pass

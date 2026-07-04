@@ -1,12 +1,12 @@
 """Note templates per docs/build-prompt.md §"Obsidian note templates".
 Every generated note carries generated_by / review_status / llm_provider frontmatter
-(content_hash is appended by the writer)."""
+(content_hash is appended by the writer). Note names and cross-links use the
+collision-aware slugs computed by the Repository — never raw slugify of a name."""
 
 from __future__ import annotations
 
 import json
 
-from relationship_intel.extraction.schemas import PROSPECT_LEAD_TYPES
 from relationship_intel.obsidian.links import slugify, transcript_note_name, wikilink
 from relationship_intel.store.models import CompanyRecord, OpportunityRecord, PersonRecord
 from relationship_intel.util.markdown import bullets, section
@@ -23,9 +23,18 @@ def _base_frontmatter(note_type: str, llm_provider: str) -> list[tuple[str, obje
     ]
 
 
-def transcript_note(raw, eri, store_raw: bool) -> tuple[str, list[tuple[str, object]], str]:
+def transcript_note(
+    raw,
+    eri,
+    store_raw: bool,
+    person_slugs: dict[str, str],
+    company_slugs: dict[str, str],
+    opportunity_links: list[tuple[str, str]],
+) -> tuple[str, list[tuple[str, object]], str]:
+    """person_slugs/company_slugs map entity NAME -> vault slug;
+    opportunity_links are (slug, name) pairs for opportunities born from this transcript."""
     date_str = raw.meeting_date.isoformat() if raw.meeting_date else None
-    name = transcript_note_name(date_str, raw.title)
+    name = transcript_note_name(date_str, raw.title, raw.transcript_hash)
     fm = _base_frontmatter("transcript", eri.llm_provider) + [
         ("source_system", raw.source_system),
         ("source_id", raw.source_id),
@@ -34,15 +43,13 @@ def transcript_note(raw, eri, store_raw: bool) -> tuple[str, list[tuple[str, obj
         ("transcript_hash", raw.transcript_hash),
         ("processed", True),
     ]
-    people_links = bullets([wikilink(slugify(p.name), p.name) for p in eri.people])
-    company_links = bullets([wikilink(slugify(c.name), c.name) for c in eri.companies])
-    opp_links = bullets(
-        [
-            wikilink(slugify(f"{p.company_name or p.person_name} succession"))
-            for p in eri.lead_profiles
-            if p.lead_type in PROSPECT_LEAD_TYPES
-        ]
+    people_links = bullets(
+        [wikilink(person_slugs.get(p.name, slugify(p.name)), p.name) for p in eri.people]
     )
+    company_links = bullets(
+        [wikilink(company_slugs.get(c.name, slugify(c.name)), c.name) for c in eri.companies]
+    )
+    opp_links = bullets([wikilink(slug, opp_name) for slug, opp_name in opportunity_links])
     raw_body = (
         raw.raw_text
         if store_raw
@@ -111,6 +118,11 @@ def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[s
             f" | transition signal: {profile.get('exit_or_transition_signal')}",
         ]
     )
+    company_line = (
+        "Company: " + wikilink(rec.company_slug, rec.company_name)
+        if rec.company_name and rec.company_slug
+        else "Company: unknown"
+    )
     managed = "\n".join(
         [
             f"# {rec.name}",
@@ -120,12 +132,7 @@ def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[s
                 bullets(
                     [
                         f"Title: {rec.title or 'unknown'}",
-                        "Company: "
-                        + (
-                            wikilink(slugify(rec.company_name), rec.company_name)
-                            if rec.company_name
-                            else "unknown"
-                        ),
+                        company_line,
                         f"Email: {rec.email or 'unknown'}",
                     ]
                 ),
@@ -143,13 +150,15 @@ def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[s
             section("Evidence", bullets([f'"{e}"' for e in rec.evidence])),
             section(
                 "Conversation History",
-                bullets([wikilink(transcript_note_name(d, t), t) for d, t in rec.transcripts]),
+                bullets(
+                    [wikilink(transcript_note_name(d, t, h), t) for d, t, h in rec.transcripts]
+                ),
             ),
             section("Next Actions", bullets([a for a in [profile.get("next_best_action")] if a])),
             section("CRM Links", []),
         ]
     ).strip()
-    return slugify(rec.name), fm, managed
+    return rec.slug, fm, managed
 
 
 def company_note(
@@ -176,10 +185,10 @@ def company_note(
                 ),
             ),
             section("Ownership / Succession Context", [rec.ownership_context or "_unknown_"]),
-            section("People", bullets([wikilink(slugify(n), n) for n in rec.people_names])),
+            section("People", bullets([wikilink(slug, name) for slug, name in rec.people])),
         ]
     ).strip()
-    return slugify(rec.name), fm, managed
+    return rec.slug, fm, managed
 
 
 def opportunity_note(
@@ -199,6 +208,14 @@ def opportunity_note(
         ("next_action_due", rec.next_action_due),
         ("crm_id", None),
     ]
+    links = [
+        wikilink(slug, name)
+        for slug, name in [
+            (rec.person_slug, rec.person_name),
+            (rec.company_slug, rec.company_name),
+        ]
+        if slug and name
+    ]
     managed = "\n".join(
         [
             f"# {rec.name}",
@@ -214,15 +231,10 @@ def opportunity_note(
                 ),
             ),
             section("Next Best Action", bullets([a for a in [rec.next_action] if a] or ["_none_"])),
-            section(
-                "Links",
-                bullets(
-                    [wikilink(slugify(n), n) for n in [rec.person_name, rec.company_name] if n]
-                ),
-            ),
+            section("Links", bullets(links)),
         ]
     ).strip()
-    return slugify(rec.name), fm, managed
+    return rec.slug, fm, managed
 
 
 def index_lines(records: list, keys: list[str]) -> list[str]:

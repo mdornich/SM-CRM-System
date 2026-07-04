@@ -12,7 +12,7 @@ import pytest
 
 from relationship_intel.crm.base import CRMRef
 from relationship_intel.crm.twenty_adapter import TwentyCRMAdapter
-from relationship_intel.intake.local_folder import NotConfiguredError
+from relationship_intel.errors import NotConfiguredError
 
 KEY = "secret-jwt-key-123"
 
@@ -106,6 +106,42 @@ def test_note_uses_bodyv2_markdown_and_note_target_link():
     assert note_body["bodyV2"] == {"markdown": "summary text"}
     target_body = json.loads(calls[1].content)
     assert target_body == {"noteId": "n-1", "personId": "p-1"}
+
+
+def test_task_uses_bodyv2_markdown_and_task_target_link():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path.endswith("/tasks"):
+            return httpx.Response(201, json={"data": {"createTask": {"id": "t-1"}}})
+        return httpx.Response(201, json={"data": {"createTaskTarget": {"id": "tt-1"}}})
+
+    from relationship_intel.crm.base import TaskPayload
+
+    _adapter(handler).create_task(
+        CRMRef("twenty", "person", "p-1"), TaskPayload(title="Call Bob", body="do it")
+    )
+    task_body = json.loads(calls[0].content)
+    assert task_body["title"] == "Call Bob"
+    assert task_body["bodyV2"] == {"markdown": "do it"}
+    assert task_body["status"] == "TODO"
+    assert json.loads(calls[1].content) == {"taskId": "t-1", "personId": "p-1"}
+
+
+def test_dsl_metacharacters_skip_filter_lookup_and_create_directly():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(201, json={"data": {"createPerson": {"id": "p-1"}}})
+
+    ref = _adapter(handler).find_or_create_contact({"name": "Smith, Jr. (Bob)", "email": None})
+    assert ref.crm_id == "p-1"
+    # No GET lookup was attempted — unsafe operands skip straight to create.
+    assert all(request.method == "POST" for request in calls)
+    for request in calls:
+        assert "filter" not in dict(request.url.params)
 
 
 def test_api_key_never_appears_in_logs(caplog):

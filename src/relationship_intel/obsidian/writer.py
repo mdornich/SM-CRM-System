@@ -59,6 +59,13 @@ class VaultWriter:
         path = self.path_for(folder, note_name)
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Defang any literal ri: markers arriving via content (e.g. a transcript
+        # quoting them) — an embedded marker would corrupt marker counting and
+        # permanently freeze the note. Deterministic, so re-runs stay byte-stable.
+        managed = managed.replace("<!-- ri:begin", "<!-- ri(escaped):begin").replace(
+            "<!-- ri:end", "<!-- ri(escaped):end"
+        )
+
         frontmatter = frontmatter + [("content_hash", managed_hash(managed))]
         rendered_fm = frontmatter_block(frontmatter)
 

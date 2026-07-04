@@ -39,10 +39,6 @@ class TranscriptSource(Protocol):
     def iter_transcripts(self) -> list[RawTranscript]: ...
 
 
-class NotConfiguredError(RuntimeError):
-    """A source or adapter is missing required configuration (e.g., API key)."""
-
-
 def _split_frontmatter(text: str) -> tuple[dict, str]:
     if not text.startswith("---"):
         return {}, text
