@@ -75,6 +75,10 @@ Before moving from sample POC data to real acceptance data, run
 timestamped backup. Twenty sample records still need to be removed manually in
 the Twenty UI; this pipeline intentionally has no delete path.
 
+Fleet integration uses `scripts/fleet-crm-source-report.sh`, a read-only wrapper
+that emits the `report` command's Contract-1 JSON for the 980labsOS
+`crm-source` registry entry.
+
 ## Tests & CI
 
 ```bash

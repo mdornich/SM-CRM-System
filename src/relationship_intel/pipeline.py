@@ -287,5 +287,17 @@ def run_report(
     vault: Path | None = None,
     run_date: date | None = None,
 ) -> dict:
-    plan = run_weekly_plan(settings, owner, week_start, vault, run_date)
+    _ = vault  # report is read-only; keep CLI signature parallel to weekly-plan.
+    repo = open_repo(settings)
+    run_date = run_date or date.today()
+    week_start = week_start or monday_of_week(run_date)
+    owner = owner or settings.default_owner
+    plan = weekly_plan.build_plan(
+        repo,
+        owner,
+        week_start,
+        settings.stall_threshold_days,
+        settings.llm_provider,
+        run_date,
+    )
     return contract.build_report(plan)
