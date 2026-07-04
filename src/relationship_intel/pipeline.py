@@ -17,7 +17,11 @@ from relationship_intel.extraction.schemas import (
     PROSPECT_LEAD_TYPES,
     ExtractedRelationshipIntelligence,
 )
-from relationship_intel.intake.local_folder import LocalFolderSource, RawTranscript
+from relationship_intel.intake.local_folder import (
+    LocalFolderSource,
+    RawTranscript,
+    TranscriptSource,
+)
 from relationship_intel.obsidian import templates
 from relationship_intel.obsidian.writer import VaultWriter
 from relationship_intel.planning import contract, weekly_plan
@@ -62,6 +66,12 @@ def run_init(settings: Settings, vault: Path | None = None) -> Path:
 
 
 def run_ingest(settings: Settings, source: Path, vault: Path | None = None) -> dict:
+    return run_ingest_source(settings, LocalFolderSource(source), vault)
+
+
+def run_ingest_source(
+    settings: Settings, source: TranscriptSource, vault: Path | None = None
+) -> dict:
     vault_root = vault or settings.obsidian_vault_path
     run_init(settings, vault_root)
     repo = open_repo(settings)
@@ -71,7 +81,7 @@ def run_ingest(settings: Settings, source: Path, vault: Path | None = None) -> d
     stats = {"ingested": 0, "skipped_duplicates": 0}
     processed: list[tuple[RawTranscript, ExtractedRelationshipIntelligence, list]] = []
     try:
-        for raw in LocalFolderSource(source).iter_transcripts():
+        for raw in source.iter_transcripts():
             # Dedupe first; extraction is pure, so nothing is persisted until it
             # succeeds.
             if repo.transcript_seen(raw.transcript_hash):

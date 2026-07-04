@@ -22,6 +22,7 @@ from typing import Any
 from relationship_intel import pipeline
 from relationship_intel.config import load_settings
 from relationship_intel.errors import NotConfiguredError
+from relationship_intel.intake.granola_api import GranolaAPISource
 from relationship_intel.queries import last_touch, who_to_call
 from relationship_intel.queries import pipeline as pipeline_query
 from relationship_intel.util.dates import parse_iso_date
@@ -87,7 +88,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest = sub.add_parser(
         "ingest", help="ingest transcripts and write vault notes", parents=[output_parent]
     )
+    ingest.add_argument("--source-type", choices=["local", "granola"], default="local")
     ingest.add_argument("--source", default=None, type=Path)
+    ingest.add_argument("--created-after", default=None)
+    ingest.add_argument("--created-before", default=None)
+    ingest.add_argument("--updated-after", default=None)
+    ingest.add_argument("--folder-id", default=None)
     ingest.add_argument("--vault", default=None, type=Path)
 
     sync = sub.add_parser(
@@ -139,8 +145,18 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Initialized store at {settings.db_path} and vault at {root}")
 
         elif args.command == "ingest":
-            source = args.source or settings.transcripts_inbox_dir
-            stats = pipeline.run_ingest(settings, source, args.vault)
+            if args.source_type == "granola":
+                source = GranolaAPISource(
+                    settings.granola_api_key,
+                    created_after=args.created_after,
+                    created_before=args.created_before,
+                    updated_after=args.updated_after,
+                    folder_id=args.folder_id,
+                )
+                stats = pipeline.run_ingest_source(settings, source, args.vault)
+            else:
+                source = args.source or settings.transcripts_inbox_dir
+                stats = pipeline.run_ingest(settings, source, args.vault)
             if args.json_output:
                 _print_json(stats)
             else:

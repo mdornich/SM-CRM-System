@@ -31,7 +31,8 @@ FORBIDDEN_TOKENS = (
 )
 
 # The ONLY permitted network surfaces (spec §3.8: no sending code exists anywhere).
-HTTP_ALLOWED = {"crm/twenty_adapter.py", "extraction/llm_client.py"}
+# Granola is read-only intake; Twenty is additive CRM sync; Anthropic is extraction.
+HTTP_ALLOWED = {"crm/twenty_adapter.py", "extraction/llm_client.py", "intake/granola_api.py"}
 
 
 def _sources() -> dict[str, str]:
