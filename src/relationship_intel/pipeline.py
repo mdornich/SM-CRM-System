@@ -278,3 +278,14 @@ def run_weekly_plan(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
     )
     return plan
+
+
+def run_report(
+    settings: Settings,
+    owner: str | None = None,
+    week_start: date | None = None,
+    vault: Path | None = None,
+    run_date: date | None = None,
+) -> dict:
+    plan = run_weekly_plan(settings, owner, week_start, vault, run_date)
+    return contract.build_report(plan)

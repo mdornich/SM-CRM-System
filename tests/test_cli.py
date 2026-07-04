@@ -112,6 +112,18 @@ def test_query_pipeline_json_reads_sqlite_without_llm(tmp_path):
     assert payload["results"][0]["succession_signal_score"] >= 50
 
 
+def test_report_command_emits_contract_json(tmp_path):
+    assert _run(["run-demo"], tmp_path).returncode == 0
+
+    result = _run(["report", "--week-start", "2026-07-06"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["agent"] == "crm-source"
+    assert payload["department"] == "CRM"
+    assert isinstance(payload["headline"], str) and payload["headline"]
+
+
 def test_query_last_touch_and_who_to_call_prose(tmp_path):
     assert _run(["run-demo"], tmp_path).returncode == 0
 

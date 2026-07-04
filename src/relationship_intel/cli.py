@@ -112,6 +112,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--vault", default=None, type=Path)
 
+    report = sub.add_parser(
+        "report", help="emit the current Contract-1 CRM report", parents=[output_parent]
+    )
+    report.add_argument("--owner", default=None)
+    report.add_argument(
+        "--week-start",
+        default=None,
+        help="ISO date (Monday); defaults to the current week's Monday",
+    )
+    report.add_argument("--vault", default=None, type=Path)
+
     query = sub.add_parser(
         "query",
         help="read deterministic answers from the canonical store",
@@ -189,6 +200,17 @@ def main(argv: list[str] | None = None) -> int:
                     f"Weekly plan generated for {plan['owner']}, week of {plan['week_start']} "
                     f"({sum(len(v) for v in plan['groups'].values())} grouped items)"
                 )
+
+        elif args.command == "report":
+            try:
+                week_start = parse_iso_date(args.week_start) if args.week_start else None
+            except ValueError:
+                print(
+                    f"Invalid --week-start {args.week_start!r}; expected YYYY-MM-DD",
+                    file=sys.stderr,
+                )
+                return 2
+            _print_json(pipeline.run_report(settings, args.owner, week_start, args.vault))
 
         elif args.command == "query":
             limit = args.limit or (10 if args.kind == "who-to-call" else 20)

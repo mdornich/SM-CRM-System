@@ -48,6 +48,7 @@ python -m relationship_intel.cli ingest --source examples/transcripts
 python -m relationship_intel.cli ingest --source-type granola --created-after 2026-07-01
 python -m relationship_intel.cli sync-crm --crm mock  # or --crm twenty (needs TWENTY_API_KEY)
 python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
+python -m relationship_intel.cli report --week-start 2026-07-06
 python -m relationship_intel.cli query who-to-call --json
 python -m relationship_intel.cli run-demo
 ```
