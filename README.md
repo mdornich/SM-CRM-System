@@ -70,6 +70,11 @@ cp launchd/com.stablemischief.relationship-intel.daily.plist ~/Library/LaunchAge
 launchctl load ~/Library/LaunchAgents/com.stablemischief.relationship-intel.daily.plist
 ```
 
+Before moving from sample POC data to real acceptance data, run
+`scripts/reset-local-output.sh --yes` to move generated local state to a
+timestamped backup. Twenty sample records still need to be removed manually in
+the Twenty UI; this pipeline intentionally has no delete path.
+
 ## Tests & CI
 
 ```bash
