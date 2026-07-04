@@ -18,7 +18,8 @@ class PersonRecord:
     last_interaction: str | None = None
     profile: dict | None = None
     evidence: list[str] = field(default_factory=list)
-    transcript_titles: list[str] = field(default_factory=list)
+    transcripts: list[tuple[str | None, str]] = field(default_factory=list)
+    """(meeting_date, title) pairs, in interaction order."""
 
 
 @dataclass

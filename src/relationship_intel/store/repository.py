@@ -319,15 +319,15 @@ class Repository:
                 (row["id"],),
             ).fetchone()
             evidence: list[str] = []
-            titles: list[str] = []
+            transcripts: list[tuple[str | None, str]] = []
             for i_row in self.conn.execute(
-                "SELECT i.evidence_json, t.title FROM interactions i"
+                "SELECT i.evidence_json, t.title, t.meeting_date FROM interactions i"
                 " JOIN transcripts t ON t.id = i.transcript_id"
                 " WHERE i.person_id = ? ORDER BY i.id",
                 (row["id"],),
             ).fetchall():
                 evidence.extend(json.loads(i_row["evidence_json"]))
-                titles.append(i_row["title"])
+                transcripts.append((i_row["meeting_date"], i_row["title"]))
             records.append(
                 PersonRecord(
                     id=row["id"],
@@ -341,7 +341,7 @@ class Repository:
                     last_interaction=last["d"] if last else None,
                     profile=json.loads(profile_row["profile_json"]) if profile_row else None,
                     evidence=evidence,
-                    transcript_titles=titles,
+                    transcripts=transcripts,
                 )
             )
         return records
