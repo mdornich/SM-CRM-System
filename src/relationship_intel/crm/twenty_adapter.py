@@ -125,16 +125,18 @@ class TwentyCRMAdapter(CRMAdapter):
         return self._ref("person", self._create("people", "person", body))
 
     def find_or_create_company(self, company: dict) -> CRMRef:
-        domain = company.get("domain")
+        domain = _filter_safe(company.get("domain"))
         if domain:
             existing = self._find_one(
                 "companies", f"domainName.primaryLinkUrl[eq]:https://{domain}"
             )
             if existing:
                 return self._ref("company", existing)
-        existing = self._find_one("companies", f"name[eq]:{company['name']}")
-        if existing:
-            return self._ref("company", existing)
+        safe_name = _filter_safe(company["name"])
+        if safe_name:
+            existing = self._find_one("companies", f"name[eq]:{safe_name}")
+            if existing:
+                return self._ref("company", existing)
         body: dict = {"name": company["name"]}
         if domain:
             body["domainName"] = {"primaryLinkUrl": f"https://{domain}"}
@@ -147,7 +149,8 @@ class TwentyCRMAdapter(CRMAdapter):
                 f"Spec stage {opportunity.get('stage')!r} does not map to a Twenty stage; "
                 "unmapped stages intentionally do not create opportunities."
             )
-        existing = self._find_one("opportunities", f"name[eq]:{opportunity['name']}")
+        safe_name = _filter_safe(opportunity["name"])
+        existing = self._find_one("opportunities", f"name[eq]:{safe_name}") if safe_name else None
         body: dict = {"name": opportunity["name"], "stage": stage}
         if opportunity.get("person_crm_id"):
             body["pointOfContactId"] = opportunity["person_crm_id"]

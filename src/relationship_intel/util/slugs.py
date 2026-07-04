@@ -14,14 +14,20 @@ def slugify(name: str) -> str:
 
 
 def assign_slugs(rows: list[tuple[int, str]]) -> dict[int, str]:
-    """rows: (id, name) in id order -> {id: unique slug}."""
-    first_owner: dict[str, int] = {}
+    """rows: (id, name) in id order -> {id: unique slug}.
+
+    Suffixed slugs are registered as taken too, so an id-suffix can never
+    collide with a natural base slug (e.g. a person literally named "Jane
+    Doe 5"). Processing in id order keeps earlier assignments stable when
+    colliders appear later."""
+    taken: set[str] = set()
     slugs: dict[int, str] = {}
     for record_id, name in rows:
-        base = slugify(name)
-        if base not in first_owner:
-            first_owner[base] = record_id
-            slugs[record_id] = base
-        else:
-            slugs[record_id] = f"{base}-{record_id}"
+        candidate = slugify(name)
+        if candidate in taken:
+            candidate = f"{candidate}-{record_id}"
+        while candidate in taken:
+            candidate = f"{candidate}-{record_id}"
+        taken.add(candidate)
+        slugs[record_id] = candidate
     return slugs

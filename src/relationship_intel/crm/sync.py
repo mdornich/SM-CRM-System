@@ -74,23 +74,25 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
         # even when the person's identity payload is unchanged.
         if person.profile:
             profile = person.profile
-            profile_hash = _payload_hash(profile)
             person_ref = CRMRef(adapter.provider, "person", state["crm_id"], state["url"])
 
+            # Hashes cover the DELIVERED payloads, not the whole profile — an
+            # unrelated profile-field change must not re-fire notes/tasks.
+            note = NotePayload(
+                title=f"Relationship intelligence — {person.name}",
+                body=(
+                    f"Lead type: {profile.get('lead_type')} | "
+                    f"stage: {profile.get('stage')} | "
+                    f"score: {profile.get('succession_signal_score')} | "
+                    f"timing: {profile.get('timing_window')}.\n"
+                    f"Next action: {profile.get('next_best_action') or 'none'}.\n"
+                    f"Evidence lives in the vault: "
+                    f"relationship-intelligence/people/{person.slug}.md"
+                ),
+            )
+            note_hash = short_hash(note.title + "\n" + note.body)
             note_state = repo.get_sync_state(adapter.provider, "person_note", person.id)
-            if not note_state or note_state["last_pushed_hash"] != profile_hash:
-                note = NotePayload(
-                    title=f"Relationship intelligence — {person.name}",
-                    body=(
-                        f"Lead type: {profile.get('lead_type')} | "
-                        f"stage: {profile.get('stage')} | "
-                        f"score: {profile.get('succession_signal_score')} | "
-                        f"timing: {profile.get('timing_window')}.\n"
-                        f"Next action: {profile.get('next_best_action') or 'none'}.\n"
-                        f"Evidence lives in the vault: "
-                        f"relationship-intelligence/people/{person.slug}.md"
-                    ),
-                )
+            if not note_state or note_state["last_pushed_hash"] != note_hash:
                 note_ref = adapter.attach_note(person_ref, note)
                 repo.set_sync_state(
                     adapter.provider,
@@ -98,30 +100,29 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
                     person.id,
                     note_ref.crm_id,
                     None,
-                    profile_hash,
+                    note_hash,
                 )
                 stats["notes"] += 1
 
             if profile.get("next_best_action"):
+                task = TaskPayload(
+                    title=profile["next_best_action"],
+                    body=f"Owner: {default_owner}. Proposed by relationship-intel "
+                    f"({profile.get('lead_type')} lead).",
+                    due_window=profile.get("next_action_due_window"),
+                    assignee=default_owner,
+                )
+                task_hash = short_hash(f"{task.title}\n{task.body}\n{task.due_window}")
                 task_state = repo.get_sync_state(adapter.provider, "person_task", person.id)
-                if not task_state or task_state["last_pushed_hash"] != profile_hash:
-                    task_ref = adapter.create_task(
-                        person_ref,
-                        TaskPayload(
-                            title=profile["next_best_action"],
-                            body=f"Owner: {default_owner}. Proposed by relationship-intel "
-                            f"({profile.get('lead_type')} lead).",
-                            due_window=profile.get("next_action_due_window"),
-                            assignee=default_owner,
-                        ),
-                    )
+                if not task_state or task_state["last_pushed_hash"] != task_hash:
+                    task_ref = adapter.create_task(person_ref, task)
                     repo.set_sync_state(
                         adapter.provider,
                         "person_task",
                         person.id,
                         task_ref.crm_id,
                         None,
-                        profile_hash,
+                        task_hash,
                     )
                     stats["tasks"] += 1
 

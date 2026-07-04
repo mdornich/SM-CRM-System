@@ -70,6 +70,16 @@ def test_company_conflict_creates_new_person_with_review_flag(tmp_path):
     assert slugs[id1] == "jane-doe"  # first keeps the stable base slug
 
 
+def test_id_suffix_never_collides_with_natural_base_slug():
+    from relationship_intel.util.slugs import assign_slugs
+
+    slugs = assign_slugs([(1, "Jane Doe"), (3, "Jane Doe 5"), (5, "Jane Doe")])
+    assert slugs[1] == "jane-doe"
+    assert slugs[3] == "jane-doe-5"
+    assert slugs[5] not in (slugs[1], slugs[3])
+    assert len(set(slugs.values())) == 3
+
+
 def test_learning_company_later_upgrades_opportunity_instead_of_duplicating(tmp_path):
     repo = _repo(tmp_path)
     person_id, _ = repo.resolve_person(Person(name="Bob Smith"), None)

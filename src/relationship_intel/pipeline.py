@@ -70,28 +70,34 @@ def run_ingest(settings: Settings, source: Path, vault: Path | None = None) -> d
 
     stats = {"ingested": 0, "skipped_duplicates": 0}
     processed: list[tuple[RawTranscript, ExtractedRelationshipIntelligence, list]] = []
-    for raw in LocalFolderSource(source).iter_transcripts():
-        # Dedupe first; extraction is pure, so nothing is persisted until it succeeds.
-        if repo.transcript_seen(raw.transcript_hash):
-            logger.info("Skipping duplicate transcript hash=%s", raw.transcript_hash[:12])
-            stats["skipped_duplicates"] += 1
-            continue
-        eri = extractor.extract(raw)
-        transcript_id, _ = repo.register_transcript(raw, store_raw=settings.store_raw_transcripts)
-        try:
-            opportunity_ids = _persist(repo, transcript_id, raw, eri, settings)
-        except Exception:
-            # Make the transcript retryable instead of stranding it as a false
-            # duplicate; people/companies already upserted are retry-safe.
-            repo.delete_transcript(transcript_id)
-            raise
-        processed.append((raw, eri, opportunity_ids))
-        stats["ingested"] += 1
-
-    # Notes are written after all persists so cross-links use the final
-    # collision-aware slugs.
-    _write_transcript_notes(repo, writer, processed, settings)
-    _write_entity_notes(repo, writer, settings.llm_provider)
+    try:
+        for raw in LocalFolderSource(source).iter_transcripts():
+            # Dedupe first; extraction is pure, so nothing is persisted until it
+            # succeeds.
+            if repo.transcript_seen(raw.transcript_hash):
+                logger.info("Skipping duplicate transcript hash=%s", raw.transcript_hash[:12])
+                stats["skipped_duplicates"] += 1
+                continue
+            eri = extractor.extract(raw)
+            transcript_id, _ = repo.register_transcript(
+                raw, store_raw=settings.store_raw_transcripts
+            )
+            try:
+                opportunity_ids = _persist(repo, transcript_id, raw, eri, settings)
+            except Exception:
+                # Make the transcript retryable instead of stranding it as a false
+                # duplicate; people/companies already upserted are retry-safe.
+                repo.delete_transcript(transcript_id)
+                raise
+            processed.append((raw, eri, opportunity_ids))
+            stats["ingested"] += 1
+    finally:
+        # Notes are written after all persists so cross-links use the final
+        # collision-aware slugs — and in the finally so a mid-batch failure
+        # still writes notes for the transcripts that DID land (they are
+        # registered and would be skipped as duplicates on the retry run).
+        _write_transcript_notes(repo, writer, processed, settings)
+        _write_entity_notes(repo, writer, settings.llm_provider)
     return stats
 
 
@@ -145,6 +151,9 @@ def _write_transcript_notes(
 ) -> None:
     if not processed:
         return
+    # Name-keyed maps prefer the lowest-id record (base slug). Known limitation:
+    # when two people share a name, transcript-note links point at the first
+    # person; the interaction rows and person notes themselves are always correct.
     person_slug_by_name = {rec.name: rec.slug for rec in reversed(repo.people_records())}
     company_slug_by_name = {rec.name: rec.slug for rec in reversed(repo.company_records())}
     opp_by_id = {rec.id: rec for rec in repo.opportunity_records()}
