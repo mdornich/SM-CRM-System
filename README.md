@@ -104,3 +104,4 @@ links but never evidence snippets.
 - [`docs/obsidian-archive.md`](docs/obsidian-archive.md) — vault layout, managed sections, backups
 - [`docs/twenty-setup.md`](docs/twenty-setup.md) — connecting the real Twenty (port 3002, API key, stage mapping)
 - [`docs/granola-ingestion.md`](docs/granola-ingestion.md) — connecting real Granola (Phase 3 options)
+- [`docs/real-ingest-checklist.md`](docs/real-ingest-checklist.md) — first James transcript batch checklist
