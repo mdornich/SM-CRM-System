@@ -104,6 +104,35 @@ def test_transcript_quoting_payload_delimiters_is_not_truncated(settings):
     assert alice.exit_or_transition_signal is True
 
 
+def test_gemini_bold_speaker_labels_are_extracted(settings):
+    from datetime import date as date_cls
+
+    from relationship_intel.intake.local_folder import RawTranscript
+    from relationship_intel.util.hashing import content_hash
+
+    transcript = (
+        "**James Whitfield:** Can you help with XPX introductions?\n"
+        "**Jack Eakin:** I'll introduce Grayson and I will connect you with the XPX group.\n"
+    )
+    raw = RawTranscript(
+        source_system="test",
+        source_id="gemini-bold-speakers",
+        title="Gemini Speaker Format",
+        raw_text=transcript,
+        transcript_hash=content_hash(transcript),
+        meeting_date=date_cls(2026, 7, 2),
+        owner="James",
+        attendees=["James Whitfield", "Jack Eakin"],
+    )
+
+    eri = Extractor(settings).extract(raw)
+
+    assert {p.name for p in eri.people} == {"James Whitfield", "Jack Eakin"}
+    jack = _profile(eri, "Jack Eakin")
+    assert jack.lead_type == LeadType.referral_source
+    assert jack.evidence_snippets
+
+
 def test_classification_without_evidence_is_rejected():
     with pytest.raises(ValidationError):
         SuccessionLeadProfile(person_name="X", lead_type="warm", evidence_snippets=[])

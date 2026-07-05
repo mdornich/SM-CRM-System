@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,7 +116,18 @@ def _check_db(settings: Settings) -> Check:
 
 def _check_llm(settings: Settings) -> Check:
     if settings.llm_provider == "mock":
-        return Check("llm", "warn", "LLM_PROVIDER=mock", "real extraction needs anthropic")
+        return Check(
+            "llm",
+            "warn",
+            "LLM_PROVIDER=mock",
+            "real extraction needs anthropic or codex",
+        )
+    if settings.llm_provider == "codex":
+        codex_bin = shutil.which("codex")
+        if not codex_bin:
+            return Check("llm", "blocked", "LLM_PROVIDER=codex but codex CLI is not on PATH")
+        model = f" model={settings.codex_model}" if settings.codex_model else " default model"
+        return Check("llm", "ok", f"Codex CLI extraction configured:{model}", codex_bin)
     if settings.llm_provider != "anthropic":
         return Check("llm", "blocked", f"unsupported LLM_PROVIDER={settings.llm_provider!r}")
     if not settings.anthropic_api_key:

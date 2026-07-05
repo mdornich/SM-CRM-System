@@ -231,7 +231,7 @@ class TwentyCRMAdapter(CRMAdapter):
             if existing:
                 return self._ref("person", existing)
         first, _, last = person["name"].partition(" ")
-        safe_first, safe_last = _filter_safe(first), _filter_safe(last or first)
+        safe_first, safe_last = _filter_safe(first), _filter_safe(last)
         if safe_first and safe_last:
             existing = self._find_one(
                 "people",
@@ -239,7 +239,7 @@ class TwentyCRMAdapter(CRMAdapter):
             )
             if existing:
                 return self._ref("person", existing)
-        body: dict = {"name": {"firstName": first, "lastName": last or first}}
+        body: dict = {"name": {"firstName": first, "lastName": last}}
         if email:
             body["emails"] = {"primaryEmail": email}
         if person.get("title"):

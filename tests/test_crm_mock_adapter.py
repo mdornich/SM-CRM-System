@@ -31,6 +31,54 @@ def test_second_sync_of_unchanged_data_performs_zero_writes(settings, samples_di
     assert {p: p.stat().st_mtime_ns for p in settings.mock_crm_path.rglob("*.json")} == mtimes
 
 
+def test_review_required_sync_only_pushes_approved_items(settings, samples_dir):
+    from dataclasses import replace
+
+    reviewed = replace(settings, crm_review_required=True)
+    pipeline.run_ingest(reviewed, samples_dir)
+
+    assert pipeline.run_sync(reviewed, "mock") == {
+        "companies": 0,
+        "people": 0,
+        "opportunities": 0,
+        "notes": 0,
+        "tasks": 0,
+        "skipped": 8,
+    }
+
+    repo = pipeline.open_repo(reviewed)
+    bob = next(p for p in repo.people_records() if p.name == "Bob Smith")
+    company = next(c for c in repo.company_records() if c.name == "Smith HVAC")
+    repo.set_review_item("company", company.id, "approved", {"name": company.name})
+    repo.set_review_item(
+        "person",
+        bob.id,
+        "approved",
+        {"name": bob.name, "email": bob.email, "title": bob.title},
+    )
+    repo.set_review_item(
+        "person_note",
+        bob.id,
+        "approved",
+        {"title": "Relationship intelligence — Bob Smith", "body": "approved note"},
+    )
+    repo.set_review_item(
+        "person_task",
+        bob.id,
+        "approved",
+        {"title": "Call Bob", "body": "approved task", "due_window": "this_week"},
+    )
+
+    stats = pipeline.run_sync(reviewed, "mock")
+
+    assert stats["companies"] == 1
+    assert stats["people"] == 1
+    assert stats["notes"] == 1
+    assert stats["tasks"] == 1
+    people = json.loads((reviewed.mock_crm_path / "people.json").read_text())
+    assert [p["name"] for p in people.values()] == ["Bob Smith"]
+
+
 def test_opportunity_custom_field_contract_forces_one_upgrade_sync(settings, samples_dir):
     from relationship_intel.crm.sync import _payload_hash
 

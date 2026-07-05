@@ -30,6 +30,14 @@ FORBIDDEN_TOKENS = (
     "os.system",
 )
 
+TOKEN_ALLOWED = {
+    # Codex extraction shells out only to `codex exec --output-schema`; the client
+    # never invokes arbitrary transcript-derived commands.
+    "subprocess": {"extraction/llm_client.py"},
+    # Local review UI parses form/query strings only; no outbound urllib calls.
+    "urllib": {"review.py"},
+}
+
 # The ONLY permitted network surfaces (spec §3.8: no sending code exists anywhere).
 # Granola is read-only intake; Twenty is additive CRM sync; Anthropic is extraction.
 HTTP_ALLOWED = {"crm/twenty_adapter.py", "extraction/llm_client.py", "intake/granola_api.py"}
@@ -42,6 +50,8 @@ def _sources() -> dict[str, str]:
 def test_no_outbound_send_modules_anywhere():
     for rel, text in _sources().items():
         for token in FORBIDDEN_TOKENS:
+            if rel in TOKEN_ALLOWED.get(token, set()):
+                continue
             assert token not in text, f"forbidden outbound token {token!r} in {rel}"
 
 

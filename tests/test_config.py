@@ -10,6 +10,7 @@ from relationship_intel.config import Settings, _bool, load_settings
 def test_defaults_resolve_without_env(monkeypatch, tmp_path):
     for var in (
         "LLM_PROVIDER",
+        "CODEX_MODEL",
         "CRM_PROVIDER",
         "OBSIDIAN_VAULT_PATH",
         "STORE_RAW_TRANSCRIPTS",
@@ -25,6 +26,7 @@ def test_defaults_resolve_without_env(monkeypatch, tmp_path):
     empty_env.touch()
     settings = load_settings(env_file=empty_env)
     assert settings.llm_provider == "mock"
+    assert settings.codex_model == ""
     assert settings.crm_provider == "mock"
     assert settings.twenty_api_url == "http://localhost:3002"
     assert settings.transcripts_inbox_dir == Path("./examples/transcripts")
@@ -35,11 +37,13 @@ def test_defaults_resolve_without_env(monkeypatch, tmp_path):
 
 def test_env_overrides_win(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("CODEX_MODEL", "gpt-5.4-mini")
     monkeypatch.setenv("OBSIDIAN_VAULT_PATH", "/tmp/elsewhere")
     monkeypatch.setenv("TRANSCRIPTS_INBOX_DIR", "/tmp/inbox")
     monkeypatch.setenv("STALL_THRESHOLD_DAYS", "30")
     settings = load_settings()
     assert settings.llm_provider == "anthropic"
+    assert settings.codex_model == "gpt-5.4-mini"
     assert settings.obsidian_vault_path == Path("/tmp/elsewhere")
     assert settings.transcripts_inbox_dir == Path("/tmp/inbox")
     assert settings.stall_threshold_days == 30

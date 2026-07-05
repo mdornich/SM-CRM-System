@@ -28,6 +28,7 @@ from relationship_intel.intake.granola_api import GranolaAPISource
 from relationship_intel.obsidian.writer import VaultWriter
 from relationship_intel.queries import last_touch, who_to_call
 from relationship_intel.queries import pipeline as pipeline_query
+from relationship_intel.review import review_summary, serve_review_ui
 from relationship_intel.util.dates import parse_iso_date
 
 
@@ -153,6 +154,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="read-only go-live readiness checks",
         parents=[output_parent],
     )
+    sub.add_parser(
+        "review-queue",
+        help="summarize pending CRM review items",
+        parents=[output_parent],
+    )
+    review_ui = sub.add_parser(
+        "review-ui",
+        help="start the local CRM review UI",
+        parents=[output_parent],
+    )
+    review_ui.add_argument("--host", default="127.0.0.1")
+    review_ui.add_argument("--port", type=int, default=8765)
     return parser
 
 
@@ -309,6 +322,16 @@ def main(argv: list[str] | None = None) -> int:
                 for check in report["checks"]:
                     detail = f" — {check['detail']}" if check.get("detail") else ""
                     print(f"- {check['status']}: {check['name']}: {check['message']}{detail}")
+
+        elif args.command == "review-queue":
+            summary = review_summary(settings)
+            if args.json_output:
+                _print_json(summary)
+            else:
+                print(f"Review queue: {summary['count']} item(s) {summary['by_status']}")
+
+        elif args.command == "review-ui":
+            serve_review_ui(settings, args.host, args.port)
 
     except NotConfiguredError as exc:
         if getattr(args, "json_output", False):

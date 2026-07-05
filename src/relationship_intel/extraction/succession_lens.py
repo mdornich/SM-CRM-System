@@ -34,7 +34,10 @@ RULES = [
 # from exit/transition scanning so "clients exploring a sale" never warms the referrer.
 REFERRAL_CUES = [
     "happy to introduce",
+    "happy to bring you as a guest",
     "i can connect you",
+    "i will connect you",
+    "i'll introduce",
     "i'll make an introduction",
     "send a couple of clients your way",
 ]

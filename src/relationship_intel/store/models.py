@@ -57,3 +57,14 @@ class OpportunityRecord:
     slug: str = ""
     person_slug: str | None = None
     company_slug: str | None = None
+
+
+@dataclass
+class CRMReviewItem:
+    id: int
+    object_type: str
+    local_id: int
+    label: str
+    status: str
+    payload: dict
+    reason: str | None = None

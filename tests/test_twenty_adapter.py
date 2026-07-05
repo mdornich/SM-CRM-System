@@ -47,6 +47,21 @@ def test_contact_lookup_uses_email_filter_then_creates_composite_payload():
     assert calls[0].headers["Authorization"] == f"Bearer {KEY}"
 
 
+def test_single_token_contact_does_not_duplicate_last_name():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"people": []}})
+        return httpx.Response(201, json={"data": {"createPerson": {"id": "p-1"}}})
+
+    _adapter(handler).find_or_create_contact({"name": "Joe"})
+
+    body = json.loads(calls[-1].content)
+    assert body["name"] == {"firstName": "Joe", "lastName": ""}
+
+
 def test_existing_contact_found_by_email_is_not_recreated():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"

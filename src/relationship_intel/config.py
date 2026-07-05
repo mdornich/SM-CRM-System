@@ -20,11 +20,13 @@ def _bool(value: str | None, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     llm_provider: str = "mock"
+    codex_model: str = ""
     anthropic_api_key: str = ""
     obsidian_vault_path: Path = Path("./output/obsidian-vault")
     obsidian_mode: str = "plain"
     store_raw_transcripts: bool = True
     crm_provider: str = "mock"
+    crm_review_required: bool = False
     twenty_api_url: str = "http://localhost:3002"
     twenty_api_key: str = ""
     granola_api_key: str = ""
@@ -50,11 +52,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         ) from exc
     return Settings(
         llm_provider=env.get("LLM_PROVIDER", "mock").strip() or "mock",
+        codex_model=env.get("CODEX_MODEL", "").strip(),
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", ""),
         obsidian_vault_path=Path(env.get("OBSIDIAN_VAULT_PATH") or "./output/obsidian-vault"),
         obsidian_mode=env.get("OBSIDIAN_MODE", "plain").strip() or "plain",
         store_raw_transcripts=_bool(env.get("STORE_RAW_TRANSCRIPTS"), True),
         crm_provider=env.get("CRM_PROVIDER", "mock").strip() or "mock",
+        crm_review_required=_bool(env.get("CRM_REVIEW_REQUIRED"), False),
         twenty_api_url=env.get("TWENTY_API_URL", "http://localhost:3002").strip()
         or "http://localhost:3002",
         twenty_api_key=env.get("TWENTY_API_KEY", ""),

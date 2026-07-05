@@ -14,7 +14,7 @@ source .venv/bin/activate
 
 python -m relationship_intel.cli init --json
 python -m relationship_intel.cli ingest --json
-python -m relationship_intel.cli sync-crm --json
+python -m relationship_intel.cli review-queue --json
 
 if [[ "$(date +%u)" == "1" ]]; then
   python -m relationship_intel.cli weekly-plan --json

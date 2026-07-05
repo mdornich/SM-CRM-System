@@ -14,7 +14,12 @@ import re
 import sqlite3
 
 from relationship_intel.extraction.schemas import Company, Person
-from relationship_intel.store.models import CompanyRecord, OpportunityRecord, PersonRecord
+from relationship_intel.store.models import (
+    CompanyRecord,
+    CRMReviewItem,
+    OpportunityRecord,
+    PersonRecord,
+)
 from relationship_intel.util.slugs import assign_slugs
 
 _HONORIFICS = {"mr", "mrs", "ms", "dr", "prof", "sir"}
@@ -346,6 +351,72 @@ class Repository:
         )
         self.conn.commit()
 
+    # -- CRM review queue ------------------------------------------------------
+
+    def upsert_review_item(
+        self,
+        object_type: str,
+        local_id: int,
+        label: str,
+        payload: dict,
+        *,
+        reason: str | None = None,
+        default_status: str = "pending",
+    ) -> None:
+        row = self.conn.execute(
+            "SELECT status FROM crm_review_items WHERE object_type = ? AND local_id = ?",
+            (object_type, local_id),
+        ).fetchone()
+        status = row["status"] if row else default_status
+        self.conn.execute(
+            "INSERT INTO crm_review_items"
+            " (object_type, local_id, label, status, payload_json, reason)"
+            " VALUES (?,?,?,?,?,?)"
+            " ON CONFLICT(object_type, local_id) DO UPDATE SET"
+            " label=excluded.label,"
+            " payload_json=excluded.payload_json,"
+            " reason=excluded.reason,"
+            " updated_at=CURRENT_TIMESTAMP",
+            (object_type, local_id, label, status, json.dumps(payload), reason),
+        )
+        self.conn.commit()
+
+    def set_review_item(self, object_type: str, local_id: int, status: str, payload: dict) -> None:
+        if status not in {"pending", "approved", "rejected", "obsidian_only"}:
+            raise ValueError(f"unsupported review status: {status}")
+        self.conn.execute(
+            "UPDATE crm_review_items"
+            " SET status = ?, payload_json = ?, updated_at = CURRENT_TIMESTAMP"
+            " WHERE object_type = ? AND local_id = ?",
+            (status, json.dumps(payload), object_type, local_id),
+        )
+        self.conn.commit()
+
+    def review_item(self, object_type: str, local_id: int) -> CRMReviewItem | None:
+        row = self.conn.execute(
+            "SELECT * FROM crm_review_items WHERE object_type = ? AND local_id = ?",
+            (object_type, local_id),
+        ).fetchone()
+        return _review_item(row) if row else None
+
+    def review_items(self) -> list[CRMReviewItem]:
+        return [
+            _review_item(row)
+            for row in self.conn.execute(
+                "SELECT * FROM crm_review_items ORDER BY object_type, local_id"
+            ).fetchall()
+        ]
+
+    def approved_review_ids(self, object_type: str) -> set[int]:
+        return {
+            row["local_id"]
+            for row in self.conn.execute(
+                "SELECT local_id FROM crm_review_items"
+                " WHERE object_type = ? AND status = 'approved'",
+                (object_type,),
+            ).fetchall()
+        }
+
     # -- plans -----------------------------------------------------------------
 
     def save_plan(self, owner: str, week_start: str, plan_json: str) -> None:
@@ -500,3 +571,15 @@ class Repository:
                 "interactions",
             )
         }
+
+
+def _review_item(row: sqlite3.Row) -> CRMReviewItem:
+    return CRMReviewItem(
+        id=row["id"],
+        object_type=row["object_type"],
+        local_id=row["local_id"],
+        label=row["label"],
+        status=row["status"],
+        payload=json.loads(row["payload_json"]),
+        reason=row["reason"],
+    )

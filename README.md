@@ -14,9 +14,9 @@ pipeline for James Whitfield.
 
 **Phase 0 status:** the pipeline runs end-to-end with a **deterministic mock
 extractor** (`llm_provider: mock` is stamped on every artifact — plumbing is
-proven, extraction quality is Phase 1) and a **mock CRM** (the Twenty REST
-adapter ships, verified against the local fork's source; live integration is
-Phase 2).
+proven, extraction quality is Phase 1), plus optional **Codex CLI** or
+**Anthropic** extraction backends for real transcript trials. The default CRM is
+mock; the Twenty REST adapter ships and can sync live records when configured.
 
 ## Quick start
 
@@ -46,6 +46,8 @@ python -m relationship_intel.cli init                 # create store + vault ske
 python -m relationship_intel.cli ingest               # defaults to TRANSCRIPTS_INBOX_DIR
 python -m relationship_intel.cli ingest --source examples/transcripts
 python -m relationship_intel.cli ingest --source-type granola --created-after 2026-07-01
+python -m relationship_intel.cli review-queue --json
+python -m relationship_intel.cli review-ui --port 8765
 python -m relationship_intel.cli sync-crm --crm mock  # or --crm twenty (needs TWENTY_API_KEY)
 python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
 python -m relationship_intel.cli report --week-start 2026-07-06
@@ -63,14 +65,21 @@ Granola key presence, Twenty reachability, and launchd setup.
 `person_name`, `lead_type`, `timing_window`, `min_score`,
 `next_action_contains`, and `required_evidence`.
 
-Configuration via `.env` (copy `.env.example`). Weeks start **Monday**;
+Configuration via `.env` (copy `.env.example`). Set `LLM_PROVIDER=codex` to run
+real transcript extraction through your local Codex CLI login; optionally set
+`CODEX_MODEL` (for example `gpt-5.4-mini`) to override the Codex CLI default.
+Use `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY` for direct Anthropic
+extraction. Set `CRM_REVIEW_REQUIRED=true` for human-in-the-loop sync: `ingest`
+creates the review queue, `review-ui` lets a human approve/edit/reject CRM items,
+and `sync-crm` pushes only approved items. Weeks start **Monday**;
 `weekly-plan` defaults to the current week's Monday. For the local go-live setup,
 `TRANSCRIPTS_INBOX_DIR` should point at the vault's `transcripts-inbox` folder.
 
 Daily automation is defined in
 `launchd/com.stablemischief.relationship-intel.daily.plist`; it runs
 `scripts/relationship-intel-daily.sh` at 7:30 AM, performing
-`init -> ingest -> sync-crm`, plus `weekly-plan` on Mondays. Install with:
+`init -> ingest -> review-queue`, plus `weekly-plan` on Mondays. Open
+`review-ui` to approve and sync CRM updates. Install with:
 
 ```bash
 cp launchd/com.stablemischief.relationship-intel.daily.plist ~/Library/LaunchAgents/

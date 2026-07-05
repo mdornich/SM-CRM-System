@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 from json import JSONDecodeError
+from pathlib import Path
 from typing import Any
 
 from relationship_intel.errors import NotConfiguredError
 from relationship_intel.extraction import succession_lens as lens
 
 _SPEAKER_RE = re.compile(r"^([A-Z][\w.'-]*(?: [A-Z][\w.'-]*)+):\s*(.*)$")
+_BOLD_SPEAKER_RE = re.compile(r"^\*\*([^*]+?:)\*\*\s*(.*)$")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _NAME = r"[A-Z][a-z]+(?: [A-Z][a-z]+)+"
 _CO = r"[A-Z][A-Za-z&'-]*(?: [A-Z][A-Za-z&'-]*)*"
@@ -28,6 +33,141 @@ _TITLE_AT_RE = re.compile(rf"({_NAME}), (?:an? )?([a-z][a-z ]+?) at ({_CO})")
 class LLMClient:
     def complete(self, system: str, user: str, response_schema: dict) -> dict:
         raise NotImplementedError
+
+
+class CodexExecClient(LLMClient):
+    """Structured extraction through the local Codex CLI and saved Codex auth."""
+
+    DEFAULT_TIMEOUT_SECONDS = 900
+
+    def __init__(
+        self,
+        *,
+        codex_bin: str = "codex",
+        model: str = "",
+        runner=subprocess.run,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        cwd: Path | None = None,
+    ):
+        self.codex_bin = codex_bin
+        self.model = model
+        self.runner = runner
+        self.timeout_seconds = timeout_seconds
+        self.cwd = cwd or Path.cwd()
+
+    def complete(self, system: str, user: str, response_schema: dict) -> dict:
+        codex_bin = self._resolve_codex_bin()
+        with tempfile.TemporaryDirectory(prefix="relationship-intel-codex-") as tmp:
+            tmpdir = Path(tmp)
+            schema_path = tmpdir / "extraction-schema.json"
+            output_path = tmpdir / "extraction-result.json"
+            schema_path.write_text(
+                json.dumps(self._strict_json_schema(response_schema)),
+                encoding="utf-8",
+            )
+
+            prompt = (
+                f"{system}\n\n"
+                "Extract relationship intelligence from the JSON payload below. "
+                "Return only JSON that conforms to the supplied output schema. "
+                "Do not include markdown fences or commentary. "
+                "Use null or empty arrays for unknowns. "
+                "Every non-unknown classification must include transcript evidence.\n\n"
+                f"Payload:\n{user}"
+            )
+            try:
+                args = [
+                    codex_bin,
+                    "exec",
+                    "--sandbox",
+                    "read-only",
+                    "--output-schema",
+                    str(schema_path),
+                    "-o",
+                    str(output_path),
+                ]
+                if self.model:
+                    args.extend(["--model", self.model])
+                args.append("-")
+                result = self.runner(
+                    args,
+                    input=prompt,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=self.timeout_seconds,
+                    cwd=self.cwd,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("Codex extraction timed out") from exc
+
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                raise RuntimeError(
+                    f"Codex extraction failed with exit {result.returncode}: {stderr}"
+                )
+
+            text = (
+                output_path.read_text(encoding="utf-8") if output_path.exists() else result.stdout
+            )
+            try:
+                return json.loads(text)
+            except JSONDecodeError:
+                return json.loads(self._strip_json_fence(text))
+
+    def _resolve_codex_bin(self) -> str:
+        if "/" in self.codex_bin:
+            if Path(self.codex_bin).exists():
+                return self.codex_bin
+            raise NotConfiguredError(f"Codex CLI not found at {self.codex_bin}")
+        resolved = shutil.which(self.codex_bin)
+        if not resolved:
+            raise NotConfiguredError(
+                "Codex CLI is not installed or not on PATH; install/sign in to Codex "
+                "or choose LLM_PROVIDER=mock/anthropic."
+            )
+        return resolved
+
+    @staticmethod
+    def _strip_json_fence(text: str) -> str:
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            return "\n".join(lines).strip()
+        return stripped
+
+    @classmethod
+    def _strict_json_schema(cls, schema: dict) -> dict:
+        if not isinstance(schema, dict):
+            return schema
+        strict = dict(schema)
+        strict.pop("default", None)
+        properties = strict.get("properties")
+        if isinstance(properties, dict):
+            strict["additionalProperties"] = False
+            existing_required = strict.get("required") or []
+            strict["required"] = sorted(set(existing_required) | set(properties))
+            strict["properties"] = {
+                key: cls._strict_json_schema(value) for key, value in properties.items()
+            }
+        defs = strict.get("$defs")
+        if isinstance(defs, dict):
+            strict["$defs"] = {key: cls._strict_json_schema(value) for key, value in defs.items()}
+        items = strict.get("items")
+        if isinstance(items, dict):
+            strict["items"] = cls._strict_json_schema(items)
+        for combiner in ("anyOf", "oneOf", "allOf"):
+            values = strict.get(combiner)
+            if isinstance(values, list):
+                strict[combiner] = [
+                    cls._strict_json_schema(value) if isinstance(value, dict) else value
+                    for value in values
+                ]
+        return strict
 
 
 class AnthropicClient(LLMClient):
@@ -166,6 +306,14 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.?!])\s+", text) if s.strip()]
 
 
+def _normalize_speaker_line(line: str) -> str:
+    stripped = line.strip()
+    bold = _BOLD_SPEAKER_RE.match(stripped)
+    if bold:
+        return f"{bold.group(1)} {bold.group(2)}".strip()
+    return stripped
+
+
 class MockLLMClient(LLMClient):
     """Deterministic rule-based extraction keyed off the succession lens cue tables."""
 
@@ -182,7 +330,7 @@ class MockLLMClient(LLMClient):
         # Speaker-attributed dialogue; narration lines carry identity patterns.
         utterances: dict[str, list[str]] = {}
         for line in lines:
-            m = _SPEAKER_RE.match(line.strip())
+            m = _SPEAKER_RE.match(_normalize_speaker_line(line))
             if m:
                 utterances.setdefault(m.group(1), []).append(m.group(2))
 
@@ -410,7 +558,9 @@ def _matches(sentence: str, cues: list[str]) -> bool:
     return any(cue in lowered for cue in cues)
 
 
-def make_client(provider: str, anthropic_api_key: str = "") -> LLMClient:
+def make_client(provider: str, anthropic_api_key: str = "", codex_model: str = "") -> LLMClient:
     if provider == "anthropic":
         return AnthropicClient(anthropic_api_key)
+    if provider == "codex":
+        return CodexExecClient(model=codex_model)
     return MockLLMClient()

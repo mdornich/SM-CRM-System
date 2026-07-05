@@ -97,6 +97,18 @@ CREATE TABLE IF NOT EXISTS plans (
     plan_json TEXT NOT NULL,
     UNIQUE(owner, week_start)
 );
+
+CREATE TABLE IF NOT EXISTS crm_review_items (
+    id INTEGER PRIMARY KEY,
+    object_type TEXT NOT NULL,
+    local_id INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    payload_json TEXT NOT NULL,
+    reason TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(object_type, local_id)
+);
 """
 
 

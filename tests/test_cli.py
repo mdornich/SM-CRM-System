@@ -21,6 +21,7 @@ def _run(args: list[str], tmp_path: Path) -> subprocess.CompletedProcess:
         RI_MOCK_CRM_PATH=str(tmp_path / "mock_crm"),
         LLM_PROVIDER="mock",
         CRM_PROVIDER="mock",
+        CRM_REVIEW_REQUIRED="false",
         TWENTY_API_KEY="",
     )
     return subprocess.run(

@@ -100,6 +100,7 @@ def run_ingest_source(
         # registered and would be skipped as duplicates on the retry run).
         _write_transcript_notes(repo, writer, processed, settings)
         _write_entity_notes(repo, writer, settings.llm_provider)
+        rebuild_review_queue(repo)
     return stats
 
 
@@ -221,7 +222,127 @@ def _write_entity_notes(repo: Repository, writer: VaultWriter, llm_provider: str
 def run_sync(settings: Settings, crm: str | None = None) -> dict:
     repo = open_repo(settings)
     adapter = make_adapter(settings, crm)
-    return sync_to_crm(repo, adapter, settings.default_owner)
+    return sync_to_crm(
+        repo,
+        adapter,
+        settings.default_owner,
+        approved_only=settings.crm_review_required,
+    )
+
+
+def rebuild_review_queue(repo: Repository) -> dict:
+    stats = {"people": 0, "companies": 0, "opportunities": 0, "notes": 0, "tasks": 0}
+    for company in repo.company_records():
+        payload = {"name": company.name, "domain": company.domain, "industry": company.industry}
+        repo.upsert_review_item(
+            "company",
+            company.id,
+            company.name,
+            payload,
+            reason=_company_review_reason(company),
+        )
+        stats["companies"] += 1
+
+    for person in repo.people_records():
+        profile = person.profile or {}
+        person_payload = {
+            "name": person.name,
+            "email": person.email,
+            "title": person.title,
+            "company_id": person.company_id,
+            "company_name": person.company_name,
+        }
+        reason = _person_review_reason(person)
+        repo.upsert_review_item(
+            "person",
+            person.id,
+            person.name,
+            person_payload,
+            reason=reason,
+        )
+        stats["people"] += 1
+
+        if person.profile:
+            note_payload = {
+                "title": f"Relationship intelligence — {person.name}",
+                "body": (
+                    f"Lead type: {profile.get('lead_type')} | "
+                    f"stage: {profile.get('stage')} | "
+                    f"score: {profile.get('succession_signal_score')} | "
+                    f"timing: {profile.get('timing_window')}.\n"
+                    f"Next action: {profile.get('next_best_action') or 'none'}.\n"
+                    f"Evidence lives in the vault: "
+                    f"relationship-intelligence/people/{person.slug}.md"
+                ),
+            }
+            repo.upsert_review_item(
+                "person_note",
+                person.id,
+                note_payload["title"],
+                note_payload,
+                reason=reason,
+            )
+            stats["notes"] += 1
+
+        if profile.get("next_best_action"):
+            task_payload = {
+                "title": profile["next_best_action"],
+                "body": f"Owner: proposed by relationship-intel ({profile.get('lead_type')} lead).",
+                "due_window": profile.get("next_action_due_window"),
+            }
+            repo.upsert_review_item(
+                "person_task",
+                person.id,
+                task_payload["title"],
+                task_payload,
+                reason=reason,
+            )
+            stats["tasks"] += 1
+
+    for opp in repo.opportunity_records():
+        payload = {
+            "name": opp.name,
+            "stage": opp.stage,
+            "lead_type": opp.lead_type,
+            "succession_signal_score": opp.succession_signal_score,
+            "urgency": opp.urgency,
+            "timing_window": opp.timing_window,
+            "owner": opp.owner,
+            "next_action": opp.next_action,
+            "next_action_due": opp.next_action_due,
+            "person_id": opp.person_id,
+            "company_id": opp.company_id,
+        }
+        repo.upsert_review_item(
+            "opportunity",
+            opp.id,
+            opp.name,
+            payload,
+            reason=None,
+            default_status="pending",
+        )
+        stats["opportunities"] += 1
+    return stats
+
+
+def _person_review_reason(person) -> str | None:
+    reasons = []
+    if len(person.name.split()) < 2:
+        reasons.append("single-token name")
+    if person.identity_confidence != "high":
+        reasons.append(f"identity confidence {person.identity_confidence}")
+    lead_type = (person.profile or {}).get("lead_type")
+    if lead_type in (None, "unknown", "not_fit"):
+        reasons.append(f"lead type {lead_type or 'unknown'}")
+    if not person.company_name:
+        reasons.append("no company")
+    return "; ".join(reasons) if reasons else None
+
+
+def _company_review_reason(company) -> str | None:
+    if not company.people and not company.website:
+        return "mentioned company/org without linked person or website"
+    return None
 
 
 def run_weekly_plan(

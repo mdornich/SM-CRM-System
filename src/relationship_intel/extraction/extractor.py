@@ -19,7 +19,11 @@ logger = logging.getLogger(__name__)
 class Extractor:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = make_client(settings.llm_provider, settings.anthropic_api_key)
+        self.client = make_client(
+            settings.llm_provider,
+            settings.anthropic_api_key,
+            settings.codex_model,
+        )
 
     def extract(self, raw: RawTranscript) -> ExtractedRelationshipIntelligence:
         meta = {

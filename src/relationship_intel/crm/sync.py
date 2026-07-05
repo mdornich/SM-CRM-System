@@ -40,13 +40,33 @@ def _sync_object(
     return repo.get_sync_state(adapter.provider, object_type, local_id), True
 
 
-def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> dict:
+def sync_to_crm(
+    repo: Repository,
+    adapter: CRMAdapter,
+    default_owner: str,
+    *,
+    approved_only: bool = False,
+) -> dict:
     stats = {"companies": 0, "people": 0, "opportunities": 0, "notes": 0, "tasks": 0, "skipped": 0}
     adapter.ensure_schema()
 
+    approved_companies = repo.approved_review_ids("company") if approved_only else None
+    approved_people = repo.approved_review_ids("person") if approved_only else None
+    approved_opps = repo.approved_review_ids("opportunity") if approved_only else None
+    approved_notes = repo.approved_review_ids("person_note") if approved_only else None
+    approved_tasks = repo.approved_review_ids("person_task") if approved_only else None
+
     company_refs: dict[int, str] = {}
     for company in repo.company_records():
-        payload = {"name": company.name, "domain": company.domain, "industry": company.industry}
+        if approved_companies is not None and company.id not in approved_companies:
+            stats["skipped"] += 1
+            continue
+        review = repo.review_item("company", company.id)
+        payload = (
+            review.payload
+            if approved_only and review
+            else {"name": company.name, "domain": company.domain, "industry": company.industry}
+        )
         state, pushed = _sync_object(
             repo,
             adapter,
@@ -60,12 +80,20 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
 
     person_refs: dict[int, str] = {}
     for person in repo.people_records():
-        payload = {
-            "name": person.name,
-            "email": person.email,
-            "title": person.title,
-            "company_crm_id": company_refs.get(person.company_id),
-        }
+        if approved_people is not None and person.id not in approved_people:
+            stats["skipped"] += 1
+            continue
+        review = repo.review_item("person", person.id)
+        payload = (
+            dict(review.payload)
+            if approved_only and review
+            else {
+                "name": person.name,
+                "email": person.email,
+                "title": person.title,
+            }
+        )
+        payload["company_crm_id"] = company_refs.get(person.company_id)
         state, pushed = _sync_object(
             repo,
             adapter,
@@ -88,40 +116,59 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
 
             # Hashes cover the DELIVERED payloads, not the whole profile — an
             # unrelated profile-field change must not re-fire notes/tasks.
-            note = NotePayload(
-                title=f"Relationship intelligence — {person.name}",
-                body=(
-                    f"Lead type: {profile.get('lead_type')} | "
-                    f"stage: {profile.get('stage')} | "
-                    f"score: {profile.get('succession_signal_score')} | "
-                    f"timing: {profile.get('timing_window')}.\n"
-                    f"Next action: {profile.get('next_best_action') or 'none'}.\n"
-                    f"Evidence lives in the vault: "
-                    f"relationship-intelligence/people/{person.slug}.md"
-                ),
-            )
-            note_hash = short_hash(note.title + "\n" + note.body)
-            note_state = repo.get_sync_state(adapter.provider, "person_note", person.id)
-            if not note_state or note_state["last_pushed_hash"] != note_hash:
-                note_ref = adapter.attach_note(person_ref, note)
-                repo.set_sync_state(
-                    adapter.provider,
-                    "person_note",
-                    person.id,
-                    note_ref.crm_id,
-                    None,
-                    note_hash,
-                )
-                stats["notes"] += 1
+            if approved_notes is None or person.id in approved_notes:
+                note_review = repo.review_item("person_note", person.id)
+                if approved_only and note_review:
+                    note = NotePayload(
+                        title=note_review.payload["title"],
+                        body=note_review.payload["body"],
+                    )
+                else:
+                    note = NotePayload(
+                        title=f"Relationship intelligence — {person.name}",
+                        body=(
+                            f"Lead type: {profile.get('lead_type')} | "
+                            f"stage: {profile.get('stage')} | "
+                            f"score: {profile.get('succession_signal_score')} | "
+                            f"timing: {profile.get('timing_window')}.\n"
+                            f"Next action: {profile.get('next_best_action') or 'none'}.\n"
+                            f"Evidence lives in the vault: "
+                            f"relationship-intelligence/people/{person.slug}.md"
+                        ),
+                    )
+                note_hash = short_hash(note.title + "\n" + note.body)
+                note_state = repo.get_sync_state(adapter.provider, "person_note", person.id)
+                if not note_state or note_state["last_pushed_hash"] != note_hash:
+                    note_ref = adapter.attach_note(person_ref, note)
+                    repo.set_sync_state(
+                        adapter.provider,
+                        "person_note",
+                        person.id,
+                        note_ref.crm_id,
+                        None,
+                        note_hash,
+                    )
+                    stats["notes"] += 1
 
-            if profile.get("next_best_action"):
-                task = TaskPayload(
-                    title=profile["next_best_action"],
-                    body=f"Owner: {default_owner}. Proposed by relationship-intel "
-                    f"({profile.get('lead_type')} lead).",
-                    due_window=profile.get("next_action_due_window"),
-                    assignee=default_owner,
-                )
+            if profile.get("next_best_action") and (
+                approved_tasks is None or person.id in approved_tasks
+            ):
+                task_review = repo.review_item("person_task", person.id)
+                if approved_only and task_review:
+                    task = TaskPayload(
+                        title=task_review.payload["title"],
+                        body=task_review.payload["body"],
+                        due_window=task_review.payload.get("due_window"),
+                        assignee=default_owner,
+                    )
+                else:
+                    task = TaskPayload(
+                        title=profile["next_best_action"],
+                        body=f"Owner: {default_owner}. Proposed by relationship-intel "
+                        f"({profile.get('lead_type')} lead).",
+                        due_window=profile.get("next_action_due_window"),
+                        assignee=default_owner,
+                    )
                 task_hash = short_hash(f"{task.title}\n{task.body}\n{task.due_window}")
                 task_state = repo.get_sync_state(adapter.provider, "person_task", person.id)
                 if not task_state or task_state["last_pushed_hash"] != task_hash:
@@ -137,21 +184,33 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
                     stats["tasks"] += 1
 
     for opp in repo.opportunity_records():
-        payload = {
-            "name": opp.name,
-            "stage": opp.stage,
-            "lead_type": opp.lead_type,
-            "succession_signal_score": opp.succession_signal_score,
-            "urgency": opp.urgency,
-            "timing_window": opp.timing_window,
-            "owner": opp.owner,
-            "next_action": opp.next_action,
-            "next_action_due": opp.next_action_due,
-            "person_name": opp.person_name,
-            "company_name": opp.company_name,
-            "person_crm_id": person_refs.get(opp.person_id),
-            "company_crm_id": company_refs.get(opp.company_id),
-        }
+        if approved_opps is not None and opp.id not in approved_opps:
+            stats["skipped"] += 1
+            continue
+        review = repo.review_item("opportunity", opp.id)
+        payload = (
+            dict(review.payload)
+            if approved_only and review
+            else {
+                "name": opp.name,
+                "stage": opp.stage,
+                "lead_type": opp.lead_type,
+                "succession_signal_score": opp.succession_signal_score,
+                "urgency": opp.urgency,
+                "timing_window": opp.timing_window,
+                "owner": opp.owner,
+                "next_action": opp.next_action,
+                "next_action_due": opp.next_action_due,
+                "person_name": opp.person_name,
+                "company_name": opp.company_name,
+            }
+        )
+        payload.update(
+            {
+                "person_crm_id": person_refs.get(opp.person_id),
+                "company_crm_id": company_refs.get(opp.company_id),
+            }
+        )
         _, pushed = _sync_object(
             repo,
             adapter,
