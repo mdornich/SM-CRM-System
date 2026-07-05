@@ -23,6 +23,7 @@ from relationship_intel import pipeline
 from relationship_intel.config import load_settings
 from relationship_intel.errors import NotConfiguredError
 from relationship_intel.intake.granola_api import GranolaAPISource
+from relationship_intel.obsidian.writer import VaultWriter
 from relationship_intel.queries import last_touch, who_to_call
 from relationship_intel.queries import pipeline as pipeline_query
 from relationship_intel.util.dates import parse_iso_date
@@ -238,14 +239,14 @@ def main(argv: list[str] | None = None) -> int:
             stats = pipeline.run_ingest(settings, Path("examples/transcripts"))
             sync_stats = pipeline.run_sync(settings, "mock")
             plan = pipeline.run_weekly_plan(settings)
-            vault_ri = Path(vault) / "relationship-intelligence"
+            writer = VaultWriter(vault, settings.obsidian_mode)
             payload = {
                 "llm_provider": settings.llm_provider,
                 "ingest": stats,
                 "sync": sync_stats,
-                "vault_notes": vault_ri,
-                "weekly_plan_dir": vault_ri / "weekly-plans",
-                "contract_report": vault_ri / "reports" / f"CRM-{plan['generated_at']}.json",
+                "vault_notes": writer.root,
+                "weekly_plan_dir": writer.dir_for("weekly-plans"),
+                "contract_report": writer.dir_for("reports") / f"CRM-{plan['generated_at']}.json",
                 "db_path": settings.db_path,
                 "mock_crm_path": settings.mock_crm_path,
             }
@@ -258,9 +259,9 @@ def main(argv: list[str] | None = None) -> int:
                     f"(duplicates skipped: {stats['skipped_duplicates']})"
                 )
                 print(f"Mock CRM sync: {sync_stats}")
-                print(f"Vault notes:   {vault_ri}")
-                print(f"Weekly plan:   {vault_ri}/weekly-plans/")
-                print(f"Contract-1:    {vault_ri}/reports/CRM-{plan['generated_at']}.json")
+                print(f"Vault notes:   {writer.root}")
+                print(f"Weekly plan:   {writer.dir_for('weekly-plans')}/")
+                print(f"Contract-1:    {writer.dir_for('reports')}/CRM-{plan['generated_at']}.json")
                 print(f"Canonical DB:  {settings.db_path}")
                 print(f"Mock CRM data: {settings.mock_crm_path}")
 

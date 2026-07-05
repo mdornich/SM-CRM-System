@@ -48,17 +48,9 @@ def make_adapter(settings: Settings, crm: str | None = None) -> CRMAdapter:
 
 def run_init(settings: Settings, vault: Path | None = None) -> Path:
     vault_root = vault or settings.obsidian_vault_path
-    writer = VaultWriter(vault_root)
-    for folder in (
-        "transcripts",
-        "people",
-        "companies",
-        "opportunities",
-        "weekly-plans",
-        "indexes",
-        "reports",
-    ):
-        (writer.root / folder).mkdir(parents=True, exist_ok=True)
+    writer = VaultWriter(vault_root, settings.obsidian_mode)
+    for folder in writer.folder_names:
+        writer.dir_for(folder).mkdir(parents=True, exist_ok=True)
     writer.ensure_readme()
     open_repo(settings)  # creates the db + schema
     settings.mock_crm_path.mkdir(parents=True, exist_ok=True)
@@ -75,7 +67,7 @@ def run_ingest_source(
     vault_root = vault or settings.obsidian_vault_path
     run_init(settings, vault_root)
     repo = open_repo(settings)
-    writer = VaultWriter(vault_root)
+    writer = VaultWriter(vault_root, settings.obsidian_mode)
     extractor = Extractor(settings)
 
     stats = {"ingested": 0, "skipped_duplicates": 0}
@@ -241,7 +233,7 @@ def run_weekly_plan(
 ) -> dict:
     vault_root = vault or settings.obsidian_vault_path
     repo = open_repo(settings)
-    writer = VaultWriter(vault_root)
+    writer = VaultWriter(vault_root, settings.obsidian_mode)
     run_date = run_date or date.today()
     week_start = week_start or monday_of_week(run_date)
     owner = owner or settings.default_owner
@@ -268,8 +260,10 @@ def run_weekly_plan(
         ("generated_at", plan["generated_at"]),
     ]
     writer.write_note("weekly-plans", note_name, fm, weekly_plan.to_markdown(plan))
-    (writer.root / "weekly-plans" / f"{note_name}.json").write_text(
-        weekly_plan.to_json(plan), encoding="utf-8"
+    writer.write_json_artifact(
+        "weekly-plans",
+        f"{note_name}.json",
+        weekly_plan.to_json(plan),
     )
 
     report = contract.build_report(plan)

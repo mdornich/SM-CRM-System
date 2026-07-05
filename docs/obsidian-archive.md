@@ -18,8 +18,19 @@ The vault is the evidence layer. Point Obsidian at `output/obsidian-vault`
   .ri-backups/                         # pre-rewrite backups of edited notes
 ```
 
-`cairns` mode (Phase 4) maps the same content onto the 980labsOS L1/L2/L3
-convention — see `docs/architecture.md` §3.5. The mode is pure configuration.
+`cairns` mode maps the same content onto the 980labsOS L1/L2/L3 convention
+without changing the pipeline contract:
+
+```
+<vault>/
+  raw/relationships/transcripts/*.md
+  card-catalog/L2/relationships/{people,companies,opportunities,weekly-plans}/*
+  manifests/relationship-intelligence/{indexes,reports}/*
+```
+
+The writer intentionally does not write `cairns/L1/succession-pipeline.md`
+directly. L1 waypoint updates are canonical-memory promotion candidates and
+must be reviewed first — see `docs/architecture.md` §3.5 and §4.
 
 ## Managed sections — how your edits survive
 
