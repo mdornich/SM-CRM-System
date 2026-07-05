@@ -13,6 +13,7 @@ The vault is the evidence layer. Point Obsidian at `output/obsidian-vault`
   companies/<company-slug>.md
   opportunities/<opportunity-slug>.md
   weekly-plans/YYYY-Wnn-<owner>-succession-plan.{md,json}
+  promotion-proposals/YYYY-Wnn-<owner>-l1-promotion-proposal.{md,json}
   indexes/{people,companies,opportunities,transcript-index}.jsonl
   reports/CRM-YYYY-MM-DD.json          # Contract-1 department report
   .ri-backups/                         # pre-rewrite backups of edited notes
@@ -25,12 +26,14 @@ without changing the pipeline contract:
 <vault>/
   raw/relationships/transcripts/*.md
   card-catalog/L2/relationships/{people,companies,opportunities,weekly-plans}/*
+  manifests/relationship-intelligence/promotion-proposals/*
   manifests/relationship-intelligence/{indexes,reports}/*
 ```
 
 The writer intentionally does not write `cairns/L1/succession-pipeline.md`
 directly. L1 waypoint updates are canonical-memory promotion candidates and
-must be reviewed first — see `docs/architecture.md` §3.5 and §4.
+must be reviewed first; the promotion proposal folder contains the review
+packet and proposed content — see `docs/architecture.md` §3.5 and §4.
 
 ## Managed sections — how your edits survive
 

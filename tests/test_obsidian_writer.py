@@ -173,6 +173,12 @@ def test_cairns_mode_pipeline_writes_reviewable_l2_and_raw_artifacts(tmp_path, s
     assert list((root / "raw/relationships/transcripts").glob("*.md"))
     assert (root / "card-catalog/L2/relationships/people/bob-smith.md").exists()
     assert list((root / "card-catalog/L2/relationships/weekly-plans").glob("*.md"))
+    assert list((root / "manifests/relationship-intelligence/promotion-proposals").glob("*.md"))
+    proposal = next(
+        (root / "manifests/relationship-intelligence/promotion-proposals").glob("*.md")
+    ).read_text()
+    assert "Approval status: `proposed`" in proposal
+    assert "cairns/L1/succession-pipeline.md" in proposal
     assert (
         root / "manifests/relationship-intelligence/reports" / f"CRM-{plan['generated_at']}.json"
     ).exists()

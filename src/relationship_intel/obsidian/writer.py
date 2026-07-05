@@ -51,6 +51,7 @@ class VaultWriter:
         "companies": "companies",
         "opportunities": "opportunities",
         "weekly-plans": "weekly-plans",
+        "promotion-proposals": "promotion-proposals",
         "indexes": "indexes",
         "reports": "reports",
     }
@@ -60,6 +61,7 @@ class VaultWriter:
         "companies": "card-catalog/L2/relationships/companies",
         "opportunities": "card-catalog/L2/relationships/opportunities",
         "weekly-plans": "card-catalog/L2/relationships/weekly-plans",
+        "promotion-proposals": "manifests/relationship-intelligence/promotion-proposals",
         "indexes": "manifests/relationship-intelligence/indexes",
         "reports": "manifests/relationship-intelligence/reports",
     }

@@ -139,3 +139,17 @@ def test_not_fit_people_never_enter_the_plan(settings, samples_dir):
     plan = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
     everyone = [i["person_name"] for g in plan["groups"].values() for i in g]
     assert "Tom Rivera" not in everyone
+
+
+def test_weekly_plan_writes_l1_promotion_proposal(settings, samples_dir):
+    pipeline.run_ingest(settings, samples_dir)
+    pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
+    root = settings.obsidian_vault_path / "relationship-intelligence"
+
+    proposals = list((root / "promotion-proposals").glob("*.md"))
+    assert proposals
+    text = proposals[0].read_text()
+    assert "L1 Promotion Proposal" in text
+    assert "Approval status: `proposed`" in text
+    assert "cairns/L1/succession-pipeline.md" in text
+    assert list((root / "promotion-proposals").glob("*.json"))

@@ -381,7 +381,7 @@ Phase 4 integration surface now exists in 980labsOS:
 | Morning-brief fan-out (`.claude/commands/morning.md`) | 980labsOS includes `crm-source` in the parallel source list |
 | Sync queries (`delegate_task`) | CLI `query` subcommand answering entity/last-touch/next-action questions from the canonical store in <1s (no LLM needed) |
 | Async work (Kanban) | Nightly ingest + weekly plan generation as scheduled fleet jobs |
-| Memory integration | `cairns` vault mode writes L3 evidence and `unreviewed`-labeled L2 cards into Vault A → searchable by Dex's `vault-search` skill. **L1 waypoint updates are canonical-memory promotion** and are *proposed*, not written directly, until reviewed — per the ORD-0003 rule that unreviewed synthesis never promotes automatically |
+| Memory integration | `cairns` vault mode writes L3 evidence and `unreviewed`-labeled L2 cards into Vault A → searchable by Dex's `vault-search` skill. **L1 waypoint updates are canonical-memory promotion** and are written as reviewable promotion proposals, not applied directly — per the ORD-0003 rule that unreviewed synthesis never promotes automatically |
 | Context.Assemble (emerging) | 980labsOS has `scripts/context/collectors/relationships.py` as an opt-in `relationships` source feeding the unified read model from `query who-to-call --json` |
 
 The key architectural consequence **today**: the weekly planner and the
@@ -503,11 +503,9 @@ that command set goes in this repo's `CLAUDE.md`).
 1. **Granola live access** — API key/workspace availability and 5-10 real
    James transcripts are still needed for acceptance; local folder covers until
    then.
-2. **Vault A promotion queue mechanics** — settled policy: L1 waypoint
-   updates are canonical-memory promotion, so this system *proposes* them
-   (e.g., for a `cairns-dream`-style consolidation pass) rather than writing
-   them directly; unreviewed synthesis never promotes automatically. Remaining
-   question is the proposal/review queue implementation.
+2. **Promotion application workflow** — weekly plan generation now writes
+   reviewable L1 promotion proposals, not canonical L1. Remaining work is the
+   future human/Dex workflow that applies or rejects a proposal.
 3. **Approval-layer shape** — ORD-0003 authority levels vs. a simpler
    approve/reject queue in the weekly plan. Decide as usage patterns emerge.
 4. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +

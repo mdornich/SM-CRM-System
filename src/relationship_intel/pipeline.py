@@ -24,7 +24,7 @@ from relationship_intel.intake.local_folder import (
 )
 from relationship_intel.obsidian import templates
 from relationship_intel.obsidian.writer import VaultWriter
-from relationship_intel.planning import contract, weekly_plan
+from relationship_intel.planning import contract, promotion_proposal, weekly_plan
 from relationship_intel.store.db import connect
 from relationship_intel.store.repository import Repository
 from relationship_intel.util.dates import monday_of_week
@@ -270,6 +270,29 @@ def run_weekly_plan(
     writer.write_report(
         f"CRM-{plan['generated_at']}.json",
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+    )
+    proposal = promotion_proposal.build_l1_proposal(plan)
+    proposal_name = f"{plan['week_label']}-{slugify(owner)}-l1-promotion-proposal"
+    proposal_fm = [
+        ("type", "l1_promotion_proposal"),
+        ("generated_by", templates.GENERATED_BY),
+        ("review_status", "unreviewed"),
+        ("approval_status", "proposed"),
+        ("target_path", promotion_proposal.TARGET_PATH),
+        ("owner", owner),
+        ("week_start", plan["week_start"]),
+        ("generated_at", plan["generated_at"]),
+    ]
+    writer.write_note(
+        "promotion-proposals",
+        proposal_name,
+        proposal_fm,
+        promotion_proposal.to_markdown(proposal),
+    )
+    writer.write_json_artifact(
+        "promotion-proposals",
+        f"{proposal_name}.json",
+        promotion_proposal.to_json(proposal),
     )
     return plan
 
