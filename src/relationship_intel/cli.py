@@ -21,6 +21,7 @@ from typing import Any
 
 from relationship_intel import pipeline
 from relationship_intel.config import load_settings
+from relationship_intel.doctor import run_doctor
 from relationship_intel.errors import NotConfiguredError
 from relationship_intel.intake.granola_api import GranolaAPISource
 from relationship_intel.obsidian.writer import VaultWriter
@@ -137,6 +138,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "run-demo",
         help="full local POC: init + ingest samples + mock sync + plan",
+        parents=[output_parent],
+    )
+    sub.add_parser(
+        "doctor",
+        help="read-only go-live readiness checks",
         parents=[output_parent],
     )
     return parser
@@ -264,6 +270,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Contract-1:    {writer.dir_for('reports')}/CRM-{plan['generated_at']}.json")
                 print(f"Canonical DB:  {settings.db_path}")
                 print(f"Mock CRM data: {settings.mock_crm_path}")
+
+        elif args.command == "doctor":
+            report = run_doctor(settings, repo_root=Path.cwd())
+            if args.json_output:
+                _print_json(report)
+            else:
+                print(
+                    f"Doctor status: {report['status']} "
+                    f"({report['ok']} ok, {report['warn']} warn, "
+                    f"{report['blocked']} blocked)"
+                )
+                for check in report["checks"]:
+                    detail = f" — {check['detail']}" if check.get("detail") else ""
+                    print(f"- {check['status']}: {check['name']}: {check['message']}{detail}")
 
     except NotConfiguredError as exc:
         if getattr(args, "json_output", False):

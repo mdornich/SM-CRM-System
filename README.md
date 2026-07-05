@@ -50,11 +50,14 @@ python -m relationship_intel.cli sync-crm --crm mock  # or --crm twenty (needs T
 python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
 python -m relationship_intel.cli report --week-start 2026-07-06
 python -m relationship_intel.cli query who-to-call --json
+python -m relationship_intel.cli doctor --json
 python -m relationship_intel.cli run-demo
 ```
 
 Add `--json` to any command for machine-readable stdout. `query` supports
 `pipeline`, `last-touch`, and `who-to-call`; all read from SQLite without an LLM.
+`doctor` is a read-only go-live preflight for local paths, SQLite, LLM config,
+Granola key presence, Twenty reachability, and launchd setup.
 
 Configuration via `.env` (copy `.env.example`). Weeks start **Monday**;
 `weekly-plan` defaults to the current week's Monday. For the local go-live setup,

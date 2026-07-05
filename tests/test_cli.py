@@ -136,3 +136,13 @@ def test_query_last_touch_and_who_to_call_prose(tmp_path):
     assert who.returncode == 0, who.stderr
     assert "Bob Smith" in who.stdout
     assert "score" in who.stdout
+
+
+def test_doctor_json_outputs_readiness_checks(tmp_path):
+    result = _run(["doctor", "--json"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] in {"ok", "warn", "blocked"}
+    names = {check["name"] for check in payload["checks"]}
+    assert {"obsidian", "db", "granola", "twenty", "launchd_files"} <= names
