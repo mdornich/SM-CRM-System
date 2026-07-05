@@ -23,6 +23,7 @@ from relationship_intel import pipeline
 from relationship_intel.config import load_settings
 from relationship_intel.doctor import run_doctor
 from relationship_intel.errors import NotConfiguredError
+from relationship_intel.evaluation import run_evaluation
 from relationship_intel.intake.granola_api import GranolaAPISource
 from relationship_intel.obsidian.writer import VaultWriter
 from relationship_intel.queries import last_touch, who_to_call
@@ -135,6 +136,13 @@ def _build_parser() -> argparse.ArgumentParser:
     query.add_argument("--limit", type=int, default=None)
     query.add_argument("--as-of", default=None, help="ISO date for who-to-call ranking")
 
+    evaluate = sub.add_parser(
+        "eval",
+        help="score extraction against redacted expectation fixtures",
+        parents=[output_parent],
+    )
+    evaluate.add_argument("--source", required=True, type=Path)
+
     sub.add_parser(
         "run-demo",
         help="full local POC: init + ingest samples + mock sync + plan",
@@ -238,6 +246,23 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(payload)
             else:
                 print(_render_query(args.kind, rows))
+
+        elif args.command == "eval":
+            report = run_evaluation(settings, args.source)
+            if args.json_output:
+                _print_json(report)
+            else:
+                print(
+                    f"Evaluation: {report['passed']}/{report['cases']} passed "
+                    f"({report['failed']} failed)"
+                )
+                for case in report["results"]:
+                    status = "pass" if case["passed"] else "fail"
+                    print(f"- {status}: {case['title']} ({case['source_id']})")
+                    for finding in case["findings"]:
+                        print(f"  - {finding['status']}: {finding['field']}: {finding['message']}")
+            if report["failed"]:
+                return 1
 
         elif args.command == "run-demo":
             vault = settings.obsidian_vault_path

@@ -51,6 +51,7 @@ python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-
 python -m relationship_intel.cli report --week-start 2026-07-06
 python -m relationship_intel.cli query who-to-call --json
 python -m relationship_intel.cli doctor --json
+python -m relationship_intel.cli eval --source redacted-evals --json
 python -m relationship_intel.cli run-demo
 ```
 
@@ -58,6 +59,9 @@ Add `--json` to any command for machine-readable stdout. `query` supports
 `pipeline`, `last-touch`, and `who-to-call`; all read from SQLite without an LLM.
 `doctor` is a read-only go-live preflight for local paths, SQLite, LLM config,
 Granola key presence, Twenty reachability, and launchd setup.
+`eval` scores redacted transcript fixtures with `expected.profiles` frontmatter:
+`person_name`, `lead_type`, `timing_window`, `min_score`,
+`next_action_contains`, and `required_evidence`.
 
 Configuration via `.env` (copy `.env.example`). Weeks start **Monday**;
 `weekly-plan` defaults to the current week's Monday. For the local go-live setup,

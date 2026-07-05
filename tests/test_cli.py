@@ -146,3 +146,29 @@ def test_doctor_json_outputs_readiness_checks(tmp_path):
     assert payload["status"] in {"ok", "warn", "blocked"}
     names = {check["name"] for check in payload["checks"]}
     assert {"obsidian", "db", "granola", "twenty", "launchd_files"} <= names
+
+
+def test_eval_command_returns_nonzero_on_failed_expectation(tmp_path):
+    eval_dir = tmp_path / "evals"
+    eval_dir.mkdir()
+    (eval_dir / "2026-07-03-redacted.md").write_text(
+        """---
+title: Redacted Owner Intro
+date: 2026-07-03
+source_id: eval-001
+expected:
+  profiles:
+    - person_name: Bob Smith
+      lead_type: not_fit
+---
+Alice Jones: I own Redacted Services and I have been thinking about the next chapter.
+Alice Jones: I want to understand valuation before I decide what to do.
+""",
+        encoding="utf-8",
+    )
+
+    result = _run(["eval", "--source", str(eval_dir), "--json"], tmp_path)
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["failed"] == 1
