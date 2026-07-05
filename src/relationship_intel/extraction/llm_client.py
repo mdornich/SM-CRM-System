@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+from json import JSONDecodeError
+from typing import Any
 
 from relationship_intel.errors import NotConfiguredError
 from relationship_intel.extraction import succession_lens as lens
@@ -33,9 +35,28 @@ class AnthropicClient(LLMClient):
 
     API_URL = "https://api.anthropic.com/v1/messages"
     MODEL = "claude-sonnet-5"
+    DEFAULT_MAX_OUTPUT_TOKENS = 4096
+    DEFAULT_MAX_INPUT_CHARS = 120_000
+    # Conservative ceiling guard; exact billing is provider-side, but this blocks
+    # accidental huge transcript spends before the request leaves the machine.
+    DEFAULT_MAX_COST_USD = 1.00
+    INPUT_DOLLARS_PER_MILLION_TOKENS = 3.00
+    OUTPUT_DOLLARS_PER_MILLION_TOKENS = 15.00
 
-    def __init__(self, api_key: str = ""):
+    def __init__(
+        self,
+        api_key: str = "",
+        *,
+        transport: Any | None = None,
+        max_input_chars: int = DEFAULT_MAX_INPUT_CHARS,
+        max_cost_usd: float = DEFAULT_MAX_COST_USD,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    ):
         self.api_key = api_key
+        self.transport = transport
+        self.max_input_chars = max_input_chars
+        self.max_cost_usd = max_cost_usd
+        self.max_output_tokens = max_output_tokens
 
     def complete(self, system: str, user: str, response_schema: dict) -> dict:
         if not self.api_key:
@@ -45,24 +66,100 @@ class AnthropicClient(LLMClient):
             )
         import httpx  # imported here: this path is intentionally inert in Phase 0
 
-        response = httpx.post(
-            self.API_URL,
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": self.MODEL,
-                "max_tokens": 4096,
-                "system": f"{system}\n\nRespond with JSON matching this schema:\n"
-                f"{json.dumps(response_schema)}",
-                "messages": [{"role": "user", "content": user}],
-            },
-            timeout=120,
+        user = self._truncate_user_payload(user)
+        estimated_cost = self._estimate_cost_usd(
+            system=system,
+            user=user,
+            response_schema=response_schema,
         )
-        response.raise_for_status()
-        return json.loads(response.json()["content"][0]["text"])
+        if estimated_cost > self.max_cost_usd:
+            raise RuntimeError(
+                f"Anthropic request estimate ${estimated_cost:.4f} exceeds "
+                f"configured max ${self.max_cost_usd:.4f}"
+            )
+
+        client = httpx.Client(transport=self.transport, timeout=120)
+        try:
+            return self._complete_with_client(client, system, user, response_schema)
+        finally:
+            client.close()
+
+    def _complete_with_client(
+        self,
+        client,
+        system: str,
+        user: str,
+        response_schema: dict,
+    ) -> dict:
+        base_system = (
+            f"{system}\n\nRespond with JSON matching this schema:\n{json.dumps(response_schema)}"
+        )
+        last_text = ""
+        for attempt in range(2):
+            system_prompt = base_system
+            if attempt == 1:
+                system_prompt += (
+                    "\n\nYour previous response was not valid JSON. Return only valid JSON, "
+                    "with no prose or markdown fences."
+                )
+            response = client.post(
+                self.API_URL,
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": self.MODEL,
+                    "max_tokens": self.max_output_tokens,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user}],
+                },
+            )
+            response.raise_for_status()
+            last_text = response.json()["content"][0]["text"]
+            try:
+                return json.loads(last_text)
+            except JSONDecodeError:
+                if attempt == 1:
+                    raise
+        raise JSONDecodeError("Invalid JSON", last_text, 0)
+
+    def _truncate_user_payload(self, user: str) -> str:
+        try:
+            payload = json.loads(user)
+        except JSONDecodeError:
+            return user[: self.max_input_chars]
+        transcript = payload.get("transcript")
+        if not isinstance(transcript, str) or len(transcript) <= self.max_input_chars:
+            return user
+        keep_head = self.max_input_chars // 2
+        keep_tail = self.max_input_chars - keep_head
+        payload["transcript"] = (
+            transcript[:keep_head]
+            + "\n\n[... transcript truncated by relationship-intel before LLM call ...]\n\n"
+            + transcript[-keep_tail:]
+        )
+        metadata = payload.setdefault("metadata", {})
+        if isinstance(metadata, dict):
+            metadata["transcript_truncated"] = True
+            metadata["original_transcript_chars"] = len(transcript)
+            metadata["sent_transcript_chars"] = len(payload["transcript"])
+        return json.dumps(payload)
+
+    def _estimate_cost_usd(self, system: str, user: str, response_schema: dict) -> float:
+        input_text = (
+            system
+            + "\n"
+            + user
+            + "\n"
+            + json.dumps(response_schema, separators=(",", ":"), sort_keys=True)
+        )
+        input_tokens = max(1, len(input_text) // 4)
+        return (
+            input_tokens / 1_000_000 * self.INPUT_DOLLARS_PER_MILLION_TOKENS
+            + self.max_output_tokens / 1_000_000 * self.OUTPUT_DOLLARS_PER_MILLION_TOKENS
+        )
 
 
 def _sentences(text: str) -> list[str]:

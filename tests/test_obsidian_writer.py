@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date
 
 from relationship_intel import pipeline
 from relationship_intel.config import Settings
@@ -139,3 +140,40 @@ def test_jsonl_indexes_are_valid(settings, samples_dir):
         assert lines
         for line in lines:
             json.loads(line)
+
+
+def test_cairns_mode_routes_writer_artifacts(tmp_path):
+    writer = VaultWriter(tmp_path, mode="cairns")
+
+    note = writer.write_note("people", "test-person", FM, "# Test\ncontent")
+    index = writer.write_jsonl_index("people", ['{"name":"Test Person"}'])
+    report = writer.write_report("CRM-2026-07-04.json", "{}\n")
+    plan_json = writer.write_json_artifact("weekly-plans", "2026-W27-james.json", "{}\n")
+    writer.ensure_readme()
+
+    assert note == tmp_path / "card-catalog/L2/relationships/people/test-person.md"
+    assert index == tmp_path / "manifests/relationship-intelligence/indexes/people.jsonl"
+    assert report == tmp_path / "manifests/relationship-intelligence/reports/CRM-2026-07-04.json"
+    assert plan_json == tmp_path / "card-catalog/L2/relationships/weekly-plans/2026-W27-james.json"
+    assert (tmp_path / "card-catalog/L2/relationships/README.md").exists()
+
+
+def test_cairns_mode_pipeline_writes_reviewable_l2_and_raw_artifacts(tmp_path, samples_dir):
+    settings = Settings(
+        obsidian_vault_path=tmp_path / "vault",
+        obsidian_mode="cairns",
+        db_path=tmp_path / "ri.db",
+        mock_crm_path=tmp_path / "mock_crm",
+    )
+
+    pipeline.run_ingest(settings, samples_dir)
+    plan = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
+    root = settings.obsidian_vault_path
+
+    assert list((root / "raw/relationships/transcripts").glob("*.md"))
+    assert (root / "card-catalog/L2/relationships/people/bob-smith.md").exists()
+    assert list((root / "card-catalog/L2/relationships/weekly-plans").glob("*.md"))
+    assert (
+        root / "manifests/relationship-intelligence/reports" / f"CRM-{plan['generated_at']}.json"
+    ).exists()
+    assert not (root / "cairns/L1/succession-pipeline.md").exists()

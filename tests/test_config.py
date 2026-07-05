@@ -7,21 +7,27 @@ from pathlib import Path
 from relationship_intel.config import Settings, _bool, load_settings
 
 
-def test_defaults_resolve_without_env(monkeypatch):
+def test_defaults_resolve_without_env(monkeypatch, tmp_path):
     for var in (
         "LLM_PROVIDER",
         "CRM_PROVIDER",
         "OBSIDIAN_VAULT_PATH",
         "STORE_RAW_TRANSCRIPTS",
         "TWENTY_API_URL",
+        "TRANSCRIPTS_INBOX_DIR",
         "DEFAULT_OWNER",
         "STALL_THRESHOLD_DAYS",
     ):
         monkeypatch.delenv(var, raising=False)
-    settings = load_settings()
+    # Point at an empty env file so the developer's real repo .env (which may
+    # legitimately set CRM_PROVIDER=twenty etc.) cannot leak into this test.
+    empty_env = tmp_path / "empty.env"
+    empty_env.touch()
+    settings = load_settings(env_file=empty_env)
     assert settings.llm_provider == "mock"
     assert settings.crm_provider == "mock"
     assert settings.twenty_api_url == "http://localhost:3002"
+    assert settings.transcripts_inbox_dir == Path("./examples/transcripts")
     assert settings.store_raw_transcripts is True
     assert settings.default_owner == "James"
     assert settings.stall_threshold_days == 21
@@ -30,10 +36,12 @@ def test_defaults_resolve_without_env(monkeypatch):
 def test_env_overrides_win(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("OBSIDIAN_VAULT_PATH", "/tmp/elsewhere")
+    monkeypatch.setenv("TRANSCRIPTS_INBOX_DIR", "/tmp/inbox")
     monkeypatch.setenv("STALL_THRESHOLD_DAYS", "30")
     settings = load_settings()
     assert settings.llm_provider == "anthropic"
     assert settings.obsidian_vault_path == Path("/tmp/elsewhere")
+    assert settings.transcripts_inbox_dir == Path("/tmp/inbox")
     assert settings.stall_threshold_days == 30
 
 

@@ -1,9 +1,9 @@
 # Connecting Real Granola (Phase 3)
 
-Phase 0 ingests from a local folder (`examples/transcripts` or any directory of
-`.md`/`.txt` files). That path stays forever — it also covers manual paste and
-exports from other tools. Granola becomes a second `TranscriptSource`
-(`src/relationship_intel/intake/granola_api.py`, currently a documented stub).
+The default go-live path ingests from a local folder (`TRANSCRIPTS_INBOX_DIR`,
+or any directory of `.md`/`.txt` files). That path stays forever — it also
+covers manual paste and exports from other tools. Granola API ingestion is
+available as a second `TranscriptSource` behind `ingest --source-type granola`.
 
 ## Transcript file format (local folder)
 
@@ -28,8 +28,13 @@ Dedupe is by content hash — re-dropping the same transcript is a no-op.
 
 1. **Granola API** (`https://docs.granola.ai`): list notes → fetch note with
    transcript. API access may be plan-gated — verify James's workspace plan.
-   Implement `GranolaAPISource.iter_transcripts()` against it; the protocol is
-   already in place.
+   Set `GRANOLA_API_KEY`, then run:
+
+   ```bash
+   python -m relationship_intel.cli ingest --source-type granola --created-after 2026-07-01
+   ```
+
+   Optional filters: `--created-before`, `--updated-after`, and `--folder-id`.
 2. **Folder-based export**: Granola/desktop export lands files in a watched
    folder → the existing `LocalFolderSource` picks them up unchanged. Zero new
    code; an n8n/Zapier/cron job moves files.

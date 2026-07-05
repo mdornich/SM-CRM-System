@@ -43,11 +43,51 @@ def managed_hash(managed: str) -> str:
 
 
 class VaultWriter:
-    def __init__(self, vault_root: str | Path):
-        self.root = Path(vault_root) / "relationship-intelligence"
+    """Write generated artifacts into either the POC or Cairns vault layout."""
+
+    _PLAIN_FOLDERS = {
+        "transcripts": "transcripts",
+        "people": "people",
+        "companies": "companies",
+        "opportunities": "opportunities",
+        "weekly-plans": "weekly-plans",
+        "indexes": "indexes",
+        "reports": "reports",
+    }
+    _CAIRNS_FOLDERS = {
+        "transcripts": "raw/relationships/transcripts",
+        "people": "card-catalog/L2/relationships/people",
+        "companies": "card-catalog/L2/relationships/companies",
+        "opportunities": "card-catalog/L2/relationships/opportunities",
+        "weekly-plans": "card-catalog/L2/relationships/weekly-plans",
+        "indexes": "manifests/relationship-intelligence/indexes",
+        "reports": "manifests/relationship-intelligence/reports",
+    }
+
+    def __init__(self, vault_root: str | Path, mode: str = "plain"):
+        self.mode = mode.strip().lower()
+        if self.mode not in ("plain", "cairns"):
+            raise ValueError(f"Unsupported Obsidian mode: {mode!r}")
+        vault_root = Path(vault_root)
+        self.root = vault_root / "relationship-intelligence" if self.mode == "plain" else vault_root
+
+    @property
+    def folder_names(self) -> tuple[str, ...]:
+        return tuple(self._folder_map)
+
+    @property
+    def _folder_map(self) -> dict[str, str]:
+        return self._PLAIN_FOLDERS if self.mode == "plain" else self._CAIRNS_FOLDERS
+
+    def dir_for(self, folder: str) -> Path:
+        try:
+            mapped = self._folder_map[folder]
+        except KeyError as exc:
+            raise ValueError(f"Unknown vault artifact folder: {folder!r}") from exc
+        return self.root / mapped
 
     def path_for(self, folder: str, note_name: str) -> Path:
-        return self.root / folder / f"{note_name}.md"
+        return self.dir_for(folder) / f"{note_name}.md"
 
     def write_note(
         self,
@@ -115,7 +155,7 @@ class VaultWriter:
             old.unlink()
 
     def write_jsonl_index(self, name: str, lines: list[str]) -> Path:
-        path = self.root / "indexes" / f"{name}.jsonl"
+        path = self.dir_for("indexes") / f"{name}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         content = "\n".join(lines) + ("\n" if lines else "")
         if not path.exists() or path.read_text(encoding="utf-8") != content:
@@ -123,14 +163,25 @@ class VaultWriter:
         return path
 
     def write_report(self, filename: str, content: str) -> Path:
-        path = self.root / "reports" / filename
+        path = self.dir_for("reports") / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
+            path.write_text(content, encoding="utf-8")
+        return path
+
+    def write_json_artifact(self, folder: str, filename: str, content: str) -> Path:
+        path = self.dir_for(folder) / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists() or path.read_text(encoding="utf-8") != content:
             path.write_text(content, encoding="utf-8")
         return path
 
     def ensure_readme(self) -> None:
-        path = self.root / "README.md"
+        path = (
+            self.root / "README.md"
+            if self.mode == "plain"
+            else self.root / "card-catalog" / "L2" / "relationships" / "README.md"
+        )
         if path.exists():
             return
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -28,6 +28,7 @@ class Settings:
     twenty_api_url: str = "http://localhost:3002"
     twenty_api_key: str = ""
     granola_api_key: str = ""
+    transcripts_inbox_dir: Path = Path("./examples/transcripts")
     default_owner: str = "James"
     stall_threshold_days: int = 21
     db_path: Path = Path("./output/relationship_intel.db")
@@ -58,6 +59,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         or "http://localhost:3002",
         twenty_api_key=env.get("TWENTY_API_KEY", ""),
         granola_api_key=env.get("GRANOLA_API_KEY", ""),
+        transcripts_inbox_dir=Path(env.get("TRANSCRIPTS_INBOX_DIR") or "./examples/transcripts"),
         default_owner=env.get("DEFAULT_OWNER", "James").strip() or "James",
         stall_threshold_days=stall_threshold_days,
         db_path=Path(env.get("RI_DB_PATH") or "./output/relationship_intel.db"),

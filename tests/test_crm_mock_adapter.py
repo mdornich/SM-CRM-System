@@ -31,6 +31,45 @@ def test_second_sync_of_unchanged_data_performs_zero_writes(settings, samples_di
     assert {p: p.stat().st_mtime_ns for p in settings.mock_crm_path.rglob("*.json")} == mtimes
 
 
+def test_opportunity_custom_field_contract_forces_one_upgrade_sync(settings, samples_dir):
+    from relationship_intel.crm.sync import _payload_hash
+
+    pipeline.run_ingest(settings, samples_dir)
+    pipeline.run_sync(settings, "mock")
+    repo = pipeline.open_repo(settings)
+    (opp,) = repo.opportunity_records()
+    person_state = repo.get_sync_state("mock", "person", opp.person_id)
+    company_state = repo.get_sync_state("mock", "company", opp.company_id)
+    old_payload = {
+        "name": opp.name,
+        "stage": opp.stage,
+        "lead_type": opp.lead_type,
+        "succession_signal_score": opp.succession_signal_score,
+        "urgency": opp.urgency,
+        "timing_window": opp.timing_window,
+        "owner": opp.owner,
+        "next_action": opp.next_action,
+        "next_action_due": opp.next_action_due,
+        "person_name": opp.person_name,
+        "company_name": opp.company_name,
+        "person_crm_id": person_state["crm_id"],
+        "company_crm_id": company_state["crm_id"],
+    }
+    opp_state = repo.get_sync_state("mock", "opportunity", opp.id)
+    repo.set_sync_state(
+        "mock",
+        "opportunity",
+        opp.id,
+        opp_state["crm_id"],
+        opp_state["url"],
+        _payload_hash(old_payload),
+    )
+
+    stats = pipeline.run_sync(settings, "mock")
+    assert stats["opportunities"] == 1
+    assert pipeline.run_sync(settings, "mock")["opportunities"] == 0
+
+
 def test_crm_notes_contain_summaries_never_evidence(settings, samples_dir):
     """Twenty gets summaries, not evidence (spec §3.6) — enforced at the note boundary."""
     pipeline.run_ingest(settings, samples_dir)

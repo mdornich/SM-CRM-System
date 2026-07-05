@@ -20,19 +20,29 @@ def _payload_hash(payload: dict) -> str:
     return short_hash(json.dumps(payload, sort_keys=True))
 
 
-def _sync_object(repo, adapter, object_type: str, local_id: int, payload: dict, create):
+def _sync_object(
+    repo,
+    adapter,
+    object_type: str,
+    local_id: int,
+    payload: dict,
+    create,
+    hash_payload: dict | None = None,
+):
     state = repo.get_sync_state(adapter.provider, object_type, local_id)
-    if state and state["last_pushed_hash"] == _payload_hash(payload):
+    delivered_hash = _payload_hash(hash_payload or payload)
+    if state and state["last_pushed_hash"] == delivered_hash:
         return state, False
     ref = create(payload)
     repo.set_sync_state(
-        adapter.provider, object_type, local_id, ref.crm_id, ref.url, _payload_hash(payload)
+        adapter.provider, object_type, local_id, ref.crm_id, ref.url, delivered_hash
     )
     return repo.get_sync_state(adapter.provider, object_type, local_id), True
 
 
 def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> dict:
     stats = {"companies": 0, "people": 0, "opportunities": 0, "notes": 0, "tasks": 0, "skipped": 0}
+    adapter.ensure_schema()
 
     company_refs: dict[int, str] = {}
     for company in repo.company_records():
@@ -149,6 +159,7 @@ def sync_to_crm(repo: Repository, adapter: CRMAdapter, default_owner: str) -> di
             opp.id,
             payload,
             lambda p: adapter.create_or_update_opportunity(p),
+            hash_payload={**payload, "_crm_write_contract": "opportunity-custom-fields-v1"},
         )
         stats["opportunities" if pushed else "skipped"] += 1
 

@@ -55,6 +55,12 @@ class PipelineItem:
 class CRMAdapter(ABC):
     provider: str
 
+    def ensure_schema(self) -> dict:
+        """Additive schema provisioning: create any custom fields the pipeline
+        writes that the CRM lacks. Never alters or deletes existing fields.
+        Providers with no provisioning needs inherit this no-op."""
+        return {"created": [], "existing": []}
+
     @abstractmethod
     def find_or_create_contact(self, person: dict) -> CRMRef: ...
 
