@@ -97,10 +97,11 @@ date, attendees if known, raw text, content hash) from any source.
   optional YAML frontmatter for metadata; falls back to filename conventions
   (`YYYY-MM-DD-source-title.md`). **POC: fully working.**
 - `granola_api.py` — pluggable `TranscriptSource` implementation for Granola.
-  **POC: interface + documented stub.** Granola access options (API, export
-  folder, Zapier, MCP) are documented in `docs/granola-ingestion.md`; local
-  folder ingestion is the contractual fallback forever (it also covers manual
-  paste, Otter exports, etc.).
+  Lists notes with cursor pagination, fetches note transcripts, and supports
+  created/updated/folder filters. Granola access options (API, export folder,
+  Zapier, MCP) are documented in `docs/granola-ingestion.md`; local folder
+  ingestion is the contractual fallback forever (it also covers manual paste,
+  Otter exports, etc.).
 
 **Dedupe at the gate:** intake computes `transcript_hash = sha256(normalized
 text)`. A hash already present in the canonical store is skipped (logged, not
@@ -370,18 +371,18 @@ conservative-warmth lens rules.
 ## 4. Dex / 980Labs OS integration contract
 
 This system is built to become the **CRM department agent** in the fleet. The
-integration surface (all Phase 4, all designed-for now):
+Phase 4 integration surface now exists in 980labsOS:
 
 | Fleet convention | This system provides |
 |---|---|
-| Contract-1 report (`agent_report_v1`) | Emitted every pipeline run to `<vault>/reports/CRM-YYYY-MM-DD.json` (§3.7) — already in the POC |
-| Fleet registry entry (`scripts/agent-fleet/registry.json`) | `name: crm-source`, `kind: command`, `command: python -m relationship_intel.cli run --report`, `output_contract: agent_report_v1`, `authority_level: observe` for the scheduled read/report path (matching existing entries like `research-fleet`); the CRM-sync step runs under an explicit pre-authorized scope (additive upserts, SM workspace only) per the §3.8 authority mapping |
-| Skill for Dex dispatch (`.claude/skills/crm-source/SKILL.md`) | Trigger phrases: pipeline status, last-touch lookups, "who should James call this week" |
-| Morning-brief fan-out (`.claude/commands/morning.md`) | Add `crm-source` to the parallel source list |
+| Contract-1 report (`agent_report_v1`) | Emitted by `report` and by `scripts/fleet-crm-source-report.sh` without writing vault/plans |
+| Fleet registry entry (`scripts/agent-fleet/registry.json`) | 980labsOS registers `crm-source`, `kind: command`, `command: scripts/fleet-crm-source-report.sh`, `output_contract: agent_report_v1`, `authority_level: observe` |
+| Skill for Dex dispatch (`.claude/skills/crm-source/SKILL.md`) | 980labsOS skill routes pipeline status, last-touch lookups, and "who should James call this week" to read-only CLI queries |
+| Morning-brief fan-out (`.claude/commands/morning.md`) | 980labsOS includes `crm-source` in the parallel source list |
 | Sync queries (`delegate_task`) | CLI `query` subcommand answering entity/last-touch/next-action questions from the canonical store in <1s (no LLM needed) |
 | Async work (Kanban) | Nightly ingest + weekly plan generation as scheduled fleet jobs |
 | Memory integration | `cairns` vault mode writes L3 evidence and `unreviewed`-labeled L2 cards into Vault A → searchable by Dex's `vault-search` skill. **L1 waypoint updates are canonical-memory promotion** and are *proposed*, not written directly, until reviewed — per the ORD-0003 rule that unreviewed synthesis never promotes automatically |
-| Context.Assemble (emerging) | Future `scripts/context/collectors/relationships.py` feeding the unified read model |
+| Context.Assemble (emerging) | 980labsOS has `scripts/context/collectors/relationships.py` as an opt-in `relationships` source feeding the unified read model from `query who-to-call --json` |
 
 The key architectural consequence **today**: the weekly planner and the
 Contract-1 reporter are separate renderers over the same plan model, and the
@@ -491,26 +492,24 @@ that command set goes in this repo's `CLAUDE.md`).
 | **0 — POC (now)** | Full pipeline, mock LLM, mock CRM, plain vault mode, sample transcripts, tests, Contract-1 emission | `python -m relationship_intel.cli run-demo` green end-to-end; all tests pass |
 | **1 — Real extraction** | `AnthropicClient` live; lens tuned on real (redacted) Granola transcripts; message-draft voice | Extraction quality accepted by Mitch/James on ≥5 real transcripts |
 | **2 — Real Twenty** | Fork running locally (Docker); `twenty_adapter` integration-tested; custom fields provisioned; pipeline stages configured | Sync of POC dataset visible and correct in Twenty UI |
-| **3 — Real Granola** | Chosen ingestion path (API / export / MCP) wired as `TranscriptSource` | James's actual meetings flow in without manual copying |
-| **4 — Fleet registration** | `cairns` vault mode into Vault A; registry entry; SKILL.md; morning-brief fan-out; `query` subcommand for delegate_task | Dex answers "who should James call this week?" from this system's report |
+| **3 — Real Granola** | API `TranscriptSource` shipped; folder/export fallback still supported | James's actual meetings flow in without manual copying once credentials/access are available |
+| **4 — Fleet registration** | `cairns` vault mode into Vault A; registry entry; SKILL.md; morning-brief fan-out; `query` subcommand for delegate_task; Context.Assemble collector | Dex answers "who should James call this week?" from this system's report |
 | **5+ — Reuse** | Second lens (client development or investor relations); approval-layer state machine; possible Twenty MCP adapter | New lens ships with zero pipeline-code changes |
 
 ---
 
 ## 10. Open questions (tracked, not blocking)
 
-1. **Granola access path** — API plan availability vs. export folder vs. MCP.
-   Investigate during Phase 3; local folder covers until then.
-2. **Twenty custom fields vs. native fields** for succession-specific data
-   (signal score, timing window) — decide when provisioning the workspace in
-   Phase 2.
-3. **Vault A write policy** — partially settled by ORD-0003: L1 waypoint
+1. **Granola live access** — API key/workspace availability and 5-10 real
+   James transcripts are still needed for acceptance; local folder covers until
+   then.
+2. **Vault A promotion queue mechanics** — settled policy: L1 waypoint
    updates are canonical-memory promotion, so this system *proposes* them
    (e.g., for a `cairns-dream`-style consolidation pass) rather than writing
    them directly; unreviewed synthesis never promotes automatically. Remaining
-   question is only the mechanics of the proposal/review queue at Phase 4.
-4. **Approval-layer shape** — ORD-0003 authority levels vs. a simpler
+   question is the proposal/review queue implementation.
+3. **Approval-layer shape** — ORD-0003 authority levels vs. a simpler
    approve/reject queue in the weekly plan. Decide as usage patterns emerge.
-5. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +
+4. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +
    delegate_task surface serves any orchestrator; no coupling to Dex
    specifically.
