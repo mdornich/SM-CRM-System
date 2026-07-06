@@ -20,11 +20,13 @@
         <integer>0</integer>
     </dict>
 
+    <!-- Log paths outside ~/Documents so launchd itself can write them
+         even under TCC. -->
     <key>StandardOutPath</key>
-    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/output/logs/smcrm-daily.stdout.log</string>
+    <string>/tmp/smcrm-daily.stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/output/logs/smcrm-daily.stderr.log</string>
+    <string>/tmp/smcrm-daily.stderr.log</string>
 
     <key>RunAtLoad</key>
     <false/>
