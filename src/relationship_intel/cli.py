@@ -454,6 +454,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"{context} for week of {args.week_start}"
                     )
             else:  # summary
+                if args.weeks is not None and args.weeks < 0:
+                    print(
+                        f"Invalid --weeks {args.weeks}; must be >= 0",
+                        file=sys.stderr,
+                    )
+                    return 2
                 summary = repo.plan_feedback_summary(args.weeks)
                 if args.json_output:
                     _print_json(summary)

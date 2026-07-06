@@ -474,8 +474,19 @@ class Repository:
 
     def plan_feedback_summary(self, weeks: int | None = None) -> dict:
         """Rollup of the last N weeks (or all-time when None). Surfaces the
-        signal to tune with — e.g. 'cold_retouch is acted_on 0/12 → drop its
-        weight'; 'top_plays hit rate 8/12'.
+        signal to tune with — e.g. 'cold_retouch is acted_on 0/12 → drop
+        its weight'; 'warm items overdue-rate went from 30% to 60%'.
+
+        Group semantics: rows are grouped by the item's SUBSTANTIVE
+        pipeline group (hot / warm / overdue / cold_retouch / stalled /
+        referral_nurture / long_term / not_ready). Derived views —
+        `top_plays` (top-3 curation over hot+warm+overdue) and
+        `needs_review` (identity-flag metadata) — are NOT recorded as
+        their own groups; feedback on an item in top_plays lands under
+        its home group so tuning affects the SCORE_WEIGHTS the top_plays
+        selection reads from, not the derivation formula itself. If you
+        need a top_plays hit rate, join plan_feedback to plan_json
+        directly for that specific question.
 
         Rows with a NULL group_name (recorded before enrichment could
         resolve context) are grouped under the sentinel `"(no context)"`

@@ -266,6 +266,46 @@ def test_plan_feedback_summary_weeks_zero_reports_zero(settings):
     assert summary == {"weeks_covered": 0, "by_group": {}, "totals": {}}
 
 
+def test_plan_feedback_summary_rejects_negative_weeks_via_cli(tmp_path, samples_dir):
+    """gh #16 review-pass finding: `--weeks -1` used to silently return
+    empty (max(-1, 0)=0). Now the CLI rejects with exit code 2 and a clear
+    stderr message so the operator can't confuse a typo for empty history."""
+    from relationship_intel.config import Settings
+
+    settings = Settings(
+        llm_provider="mock",
+        obsidian_vault_path=tmp_path / "vault",
+        db_path=tmp_path / "ri.db",
+        mock_crm_path=tmp_path / "mock_crm",
+        crm_review_required=False,
+    )
+    pipeline.run_ingest(settings, samples_dir)
+
+    env = {
+        "PATH": subprocess.os.environ["PATH"],
+        "HOME": subprocess.os.environ["HOME"],
+        "OBSIDIAN_VAULT_PATH": str(settings.obsidian_vault_path),
+        "RI_DB_PATH": str(settings.db_path),
+        "RI_MOCK_CRM_PATH": str(settings.mock_crm_path),
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "relationship_intel.cli",
+            "plan-feedback",
+            "summary",
+            "--weeks",
+            "-1",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 2
+    assert "must be >= 0" in result.stderr
+
+
 def test_plan_feedback_rejects_unknown_action(settings):
     """gh #16: only the enum of {acted, deferred, rejected, ignored} is
     accepted — guards against silent typos in a future UI or CLI."""
