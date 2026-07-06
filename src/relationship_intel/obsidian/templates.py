@@ -98,13 +98,14 @@ def person_note(
     rec: PersonRecord, llm_provider: str, default_owner: str | None = None
 ) -> tuple[str, list[tuple[str, object]], str]:
     profile = rec.profile or {}
+    owner = rec.owner or default_owner
     fm = _base_frontmatter("person", llm_provider) + [
         ("name", rec.name),
         ("email", rec.email),
         ("company", rec.company_name),
         ("lead_type", profile.get("lead_type")),
         ("stage", profile.get("stage")),
-        ("owner", default_owner),
+        ("owner", owner),
         ("confidence", profile.get("confidence")),
         ("identity_confidence", rec.identity_confidence),
         ("needs_review", rec.needs_review),
@@ -211,8 +212,9 @@ def company_note(
 
 
 def opportunity_note(
-    rec: OpportunityRecord, llm_provider: str
+    rec: OpportunityRecord, llm_provider: str, default_owner: str | None = None
 ) -> tuple[str, list[tuple[str, object]], str]:
+    owner = rec.owner or default_owner
     fm = _base_frontmatter("opportunity", llm_provider) + [
         ("name", rec.name),
         ("company", rec.company_name),
@@ -222,7 +224,7 @@ def opportunity_note(
         ("succession_signal_score", rec.succession_signal_score),
         ("urgency", rec.urgency),
         ("timing_window", rec.timing_window),
-        ("owner", rec.owner),
+        ("owner", owner),
         ("next_action", rec.next_action),
         ("next_action_due", rec.next_action_due),
         ("crm_id", None),
@@ -240,12 +242,15 @@ def opportunity_note(
         if rec.evidence
         else "_no recorded succession signal yet — score is provisional_"
     )
+    business_owner = "unknown" if rec.business_owner_signal is None else rec.business_owner_signal
+    transition = (
+        "unknown" if rec.exit_or_transition_signal is None else rec.exit_or_transition_signal
+    )
     signals = bullets(
         [
             f"Score: {rec.succession_signal_score} | urgency: {rec.urgency}"
             f" | timing: {rec.timing_window}",
-            f"Business owner signal: {rec.business_owner_signal}"
-            f" | transition signal: {rec.exit_or_transition_signal}",
+            f"Business owner signal: {business_owner} | transition signal: {transition}",
         ]
         + [f"Pain: {item}" for item in rec.pain_points]
         + [f"Goal: {item}" for item in rec.stated_goals]

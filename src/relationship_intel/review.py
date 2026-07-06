@@ -156,29 +156,42 @@ def _handle_bundle(settings: Settings, form: dict[str, list[str]]) -> tuple[int,
     status = _one(form, "status")
     if status not in FINAL_STATUSES:
         raise ValueError(f"Unsupported bundle status: {status}")
-    # Push-on-approve: any Approve bundle click also fires sync to CRM for the
-    # newly-approved subset (see docs/architecture.md §Human Approval; Option 1
-    # of gh issue #6). Rejected / vault-only bundles never push.
-    push_on_approve = _one_or_default(form, "push", "on") in {"on", "true", "1"}
+    # Push-on-approve (gh issue #6, Option 1): Approve bundles fire sync to the
+    # CRM in the same request; Reject / Vault-only bundles never push.
+    #
+    # Failure model: if the sync call raises (Twenty unreachable, HTTP error,
+    # ValueError from a stage that shouldn't create), we roll every approved
+    # status back to its prior value BEFORE re-raising, so an error banner in
+    # the UI never leaves half-approved items in the DB waiting to leak on the
+    # next click.
     repo = open_repo(settings)
-    changed = 0
+    items_to_update: list[tuple[str, int, str, dict]] = []
     for raw in form.get("item", []):
         object_type, raw_id = raw.split(":", 1)
         local_id = int(raw_id)
         item = repo.review_item(object_type, local_id)
         if not item:
             continue
-        repo.set_review_item(object_type, local_id, status, item.payload)
+        items_to_update.append((object_type, local_id, item.status, item.payload))
+
+    changed = 0
+    for object_type, local_id, _prior, payload in items_to_update:
+        repo.set_review_item(object_type, local_id, status, payload)
         changed += 1
+
     sync_stats: dict | None = None
-    if status == "approved" and push_on_approve and changed > 0:
-        sync_stats = _handle_sync(settings)
+    if status == "approved" and changed > 0:
+        try:
+            sync_stats = _handle_sync(settings)
+        except Exception:
+            # Roll back the approved-status writes so the operator's "approve"
+            # click doesn't leave the DB in a state where the next sync
+            # silently pushes what this one couldn't.
+            rollback_repo = open_repo(settings)
+            for object_type, local_id, prior, payload in items_to_update:
+                rollback_repo.set_review_item(object_type, local_id, prior, payload)
+            raise
     return changed, sync_stats
-
-
-def _one_or_default(form: dict[str, list[str]], key: str, default: str) -> str:
-    values = form.get(key)
-    return values[0] if values else default
 
 
 def _handle_sync(settings: Settings) -> dict:

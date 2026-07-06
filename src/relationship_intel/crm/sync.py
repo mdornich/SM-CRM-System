@@ -197,14 +197,6 @@ def sync_to_crm(
         if approved_opps is not None and opp.id not in approved_opps:
             stats["skipped"] += 1
             continue
-        # Twenty's default board has no Lost/Stalled/Not-fit column; skip these
-        # rather than crash the sync. Mock adapter accepts all stages.
-        if twenty_provider and opp.stage in NO_OPP_STAGES:
-            stats["skipped_by_stage"] += 1
-            logger.info(
-                "twenty skip opportunity id=%s stage=%s (no Twenty column)", opp.id, opp.stage
-            )
-            continue
         review = repo.review_item("opportunity", opp.id)
         payload = (
             dict(review.payload)
@@ -223,6 +215,19 @@ def sync_to_crm(
                 "company_name": opp.company_name,
             }
         )
+        # Twenty's default board has no Lost/Stalled/Not-fit column; skip these
+        # rather than crash the adapter. Check the REVIEWED stage (payload)
+        # rather than the raw DB stage so a reviewer's edit doesn't bypass the
+        # filter and detonate the sync mid-loop.
+        effective_stage = payload.get("stage", opp.stage)
+        if twenty_provider and effective_stage in NO_OPP_STAGES:
+            stats["skipped_by_stage"] += 1
+            logger.info(
+                "twenty skip opportunity id=%s stage=%s (no Twenty column)",
+                opp.id,
+                effective_stage,
+            )
+            continue
         payload.update(
             {
                 "person_crm_id": person_refs.get(opp.person_id),
@@ -241,4 +246,16 @@ def sync_to_crm(
         stats["opportunities" if pushed else "skipped"] += 1
 
     logger.info("CRM sync (%s): %s", adapter.provider, stats)
+    # If review-gated and nothing landed, surface a clear hint so a user who
+    # inherited the default (CRM_REVIEW_REQUIRED=true) doesn't stare at empty
+    # stats and think extraction produced nothing.
+    pushed_total = stats["companies"] + stats["people"] + stats["opportunities"]
+    if approved_only and pushed_total == 0 and stats["skipped"] > 0:
+        logger.warning(
+            "sync_to_crm found %d pending review item(s) but pushed 0 — "
+            "review-required mode is on (CRM_REVIEW_REQUIRED=true). "
+            "Approve items in the review UI (relationship_intel review-ui) "
+            "or set CRM_REVIEW_REQUIRED=false to bypass.",
+            stats["skipped"],
+        )
     return stats

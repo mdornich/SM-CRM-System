@@ -462,6 +462,13 @@ class Repository:
                 "SELECT max(meeting_date) AS d FROM interactions WHERE person_id = ?",
                 (row["id"],),
             ).fetchone()
+            # Person owner comes from any linked opportunity (any owner set wins);
+            # falls back to the pipeline default_owner at render time when None.
+            owner_row = self.conn.execute(
+                "SELECT owner FROM opportunities WHERE person_id = ?"
+                " AND owner IS NOT NULL ORDER BY id LIMIT 1",
+                (row["id"],),
+            ).fetchone()
             evidence: list[str] = []
             transcripts: list[tuple[str | None, str, str]] = []
             for i_row in self.conn.execute(
@@ -491,6 +498,7 @@ class Repository:
                     profile=json.loads(profile_row["profile_json"]) if profile_row else None,
                     evidence=evidence,
                     transcripts=transcripts,
+                    owner=owner_row["owner"] if owner_row else None,
                 )
             )
         return records
@@ -503,16 +511,19 @@ class Repository:
             "SELECT id, name FROM opportunities ORDER BY id"
         ).fetchall()
         opp_slugs = assign_slugs([(r["id"], r["name"]) for r in opp_rows_all])
-        # Stage precedence: highest-priority linked opportunity wins the company card FM.
+        # Stage precedence for the aggregate company-card FM. A closed-won
+        # relationship is the strongest signal to headline (you've done
+        # business with them); active pipeline stages follow by advancement;
+        # terminal negative stages sink to the bottom.
         stage_rank = {
-            "active_opportunity": 6,
-            "qualified": 5,
-            "discovery": 4,
-            "nurture": 3,
-            "new": 2,
-            "stalled": 1,
-            "closed_won": 1,
-            "closed_lost": 0,
+            "closed_won": 10,
+            "active_opportunity": 7,
+            "qualified": 6,
+            "discovery": 5,
+            "nurture": 4,
+            "new": 3,
+            "stalled": 2,
+            "closed_lost": 1,
             "not_fit": 0,
         }
         records = []
@@ -541,6 +552,7 @@ class Repository:
             evidence: list[str] = []
             transcripts: list[tuple[str | None, str, str]] = []
             seen_hashes: set[str] = set()
+            seen_evidence: set[str] = set()
             for i_row in self.conn.execute(
                 "SELECT i.evidence_json, t.title, t.meeting_date, t.transcript_hash"
                 " FROM interactions i"
@@ -549,7 +561,12 @@ class Repository:
                 " WHERE p.company_id = ? ORDER BY i.id",
                 (row["id"],),
             ).fetchall():
-                evidence.extend(json.loads(i_row["evidence_json"]))
+                # Dedupe evidence — a meeting with N attendees at the same
+                # company would otherwise stack N copies of every snippet.
+                for snippet in json.loads(i_row["evidence_json"]):
+                    if snippet not in seen_evidence:
+                        evidence.append(snippet)
+                        seen_evidence.add(snippet)
                 if i_row["transcript_hash"] not in seen_hashes:
                     transcripts.append(
                         (i_row["meeting_date"], i_row["title"], i_row["transcript_hash"])

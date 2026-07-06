@@ -22,6 +22,8 @@ class PersonRecord:
     evidence: list[str] = field(default_factory=list)
     transcripts: list[tuple[str | None, str, str]] = field(default_factory=list)
     """(meeting_date, title, transcript_hash) triples, in interaction order."""
+    owner: str | None = None
+    """Derived from any linked opportunity's owner — used by the person note FM."""
 
 
 @dataclass

@@ -196,3 +196,42 @@ def test_pipeline_items_round_trip(settings, samples_dir):
     assert items[0].person_name == "Bob Smith"
     assert items[0].lead_type == "warm"
     assert items[0].crm_ref is not None
+
+
+def test_reviewer_stage_edit_to_no_opp_stage_is_filtered_for_twenty(settings, samples_dir):
+    """A reviewer edits an opportunity's stage to 'not_fit' / 'stalled' /
+    'closed_lost' in the review UI and approves. The NO_OPP_STAGES filter must
+    read the REVIEWED payload stage, not the raw DB stage — otherwise Twenty
+    receives a payload with an unmappable stage and crashes the sync mid-loop.
+    (Verified finding, /code-review high-effort workflow.)"""
+    from dataclasses import replace
+
+    from relationship_intel.crm.mock_adapter import MockCRMAdapter
+    from relationship_intel.crm.sync import sync_to_crm
+
+    reviewed = replace(settings, crm_review_required=True)
+    pipeline.run_ingest(reviewed, samples_dir)
+    repo = pipeline.open_repo(reviewed)
+    bob = next(p for p in repo.people_records() if p.name == "Bob Smith")
+    company = next(c for c in repo.company_records() if c.name == "Smith HVAC")
+    (opp,) = repo.opportunity_records()
+
+    # Reviewer edits the opportunity stage to a Twenty-unmappable stage and
+    # approves everything the sync loop touches.
+    repo.set_review_item(
+        "opportunity",
+        opp.id,
+        "approved",
+        {"name": opp.name, "stage": "closed_lost", "lead_type": opp.lead_type},
+    )
+    repo.set_review_item("person", bob.id, "approved", {"name": bob.name})
+    repo.set_review_item("company", company.id, "approved", {"name": company.name})
+
+    # Simulate the Twenty provider without hitting the network.
+    class FakeTwenty(MockCRMAdapter):
+        provider = "twenty"
+
+    adapter = FakeTwenty(reviewed.mock_crm_path)
+    stats = sync_to_crm(repo, adapter, reviewed.default_owner, approved_only=True)
+    assert stats["skipped_by_stage"] == 1
+    assert stats["opportunities"] == 0

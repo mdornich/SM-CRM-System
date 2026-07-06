@@ -194,7 +194,7 @@ def _write_entity_notes(
         name, fm, managed = templates.company_note(rec, llm_provider, default_owner)
         writer.write_note("companies", name, fm, managed)
     for rec in opportunities:
-        name, fm, managed = templates.opportunity_note(rec, llm_provider)
+        name, fm, managed = templates.opportunity_note(rec, llm_provider, default_owner)
         writer.write_note("opportunities", name, fm, managed)
 
     writer.write_jsonl_index(
