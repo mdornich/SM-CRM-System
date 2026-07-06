@@ -1,9 +1,16 @@
 # SM-CRM-System — Relationship Intelligence Pipeline Architecture
 
-**Status:** Draft v1 — spec for review before build
-**Date:** 2026-07-04
+**Status:** Draft v2 — reflects shipped code as of 2026-07-06
+**Date:** 2026-07-06 (v1 was 2026-07-04)
 **Owner:** Mitch Dornich (980Labs / Stable Mischief)
 **First use case:** Succession pipeline for James Whitfield
+
+**v2 changelog (2026-07-06):** review-first Twenty sync is live (§3.9);
+CodexExecClient added as a third LLM provider (§3.2, §6); managed-marker
+granularity relaxed to block-level (§3.5); Contract-1 metrics emit both
+stage-shaped and group-shaped counts (§3.7); `review_status` symmetric
+across all intelligence artifacts (§3.5); daily scheduler via launchd
+(§4). See gh issues #3–#14 for the underlying commits.
 
 ---
 
@@ -118,7 +125,12 @@ reprocessed).
   referral partners) are new lens files, not new pipelines.
 - `llm_client.py` — provider-agnostic LLM interface: `complete(system, user,
   response_schema) -> dict`. Implementations: `MockLLMClient` (POC default),
-  `AnthropicClient` (Phase 1, code present but inert without key).
+  `AnthropicClient` (Phase 1, code present but inert without key), and
+  `CodexExecClient` (`LLM_PROVIDER=codex`) which shells out to
+  `codex exec --sandbox read-only` and lets a developer drive extraction
+  through their own Codex CLI subscription instead of the paid API. All
+  three conform to the same `complete()` contract; the extractor doesn't
+  care which is wired.
 - `extractor.py` — orchestrates lens + client, validates output against
   schemas, enforces the anti-hallucination rules (evidence required for every
   classification; nulls for unknowns).
@@ -209,26 +221,34 @@ config change, not a refactor.
 
 **Review-status model (per ORD-0003 §Memory):** every AI-generated
 intelligence artifact that could affect future planning — person, company,
-and opportunity cards, and weekly plans — carries frontmatter
+opportunity, and lead-profile records, and weekly plans — carries frontmatter
 `review_status: unreviewed | reviewed | corrected | confirmed`, defaulting to
-`unreviewed`. Unreviewed artifacts may inform recommendations but are always
+`unreviewed`. As of v2 the column exists on all four artifact tables and the
+note templates read the DB value (gh #11 — v1 shipped the column on `people`
+only; migrations add it to companies/opportunities/lead_profiles on next
+connect). Unreviewed artifacts may inform recommendations but are always
 labeled as AI synthesis, never treated as canonical fact. Corrections
-preserve what changed and why (the managed-section + backup mechanism below
+preserve what changed and why (the managed-section + backup mechanism above
 keeps the original visible in `.ri-backups/`). Only `reviewed`/`corrected`/
 `confirmed` content is a candidate for promotion into canonical memory
 (Vault A L1/L2) in Phase 4 — unreviewed synthesis never promotes
-automatically.
+automatically. `Repository.set_review_status(table, id, status)` gives future
+UI/CLI a validated write path.
 
 **Idempotent-write mechanism (concrete, testable):**
 
 - Every generated note carries frontmatter `generated_by: relationship-intel`
   and `content_hash` of its AI-managed content.
 - AI-managed content lives between markers:
-  `<!-- ri:begin section-name -->` … `<!-- ri:end section-name -->`.
-- On rewrite: text outside markers is preserved verbatim; sections are
-  replaced only when their content hash changed; a `.bak` copy is written to
+  `<!-- ri:begin main -->` … `<!-- ri:end main -->` — a **single block-level
+  marker** covering the whole managed body, not per-section markers. (Draft
+  v1 sketched per-section markers; v2 relaxes to block-level after real
+  usage confirmed the `.ri-backups/` safety net is enough and per-section
+  granularity added complexity without a demonstrated user need. gh #8.)
+- On rewrite: text outside the marker is preserved verbatim; the block is
+  replaced only when its content hash changed; a `.bak` copy is written to
   `<vault>/.ri-backups/<path>/<timestamp>.md` before any file that contains
-  out-of-marker edits is touched.
+  out-of-marker edits is touched (capped at 10 backups per file).
 - Re-running on unchanged input is a byte-for-byte no-op (asserted in tests).
 
 ### 3.6 CRM Adapter Layer (`src/relationship_intel/crm/`)
@@ -238,15 +258,22 @@ imports only this.
 
 ```python
 class CRMAdapter(ABC):
+    def ensure_schema() -> dict                   # provision custom fields (v2)
     def find_or_create_contact(person) -> CRMRef
     def find_or_create_company(company) -> CRMRef
     def create_or_update_opportunity(opportunity) -> CRMRef
     def attach_note(ref, note) -> None            # concise summary + vault link back
     def create_task(ref, task) -> CRMRef          # follow-ups with due dates
-    def tag_record(ref, tags) -> None
+    def tag_record(ref, tags) -> None             # v2: Twenty raises NotImplemented (gh #14)
     def get_pipeline_items(owner, stages) -> list[PipelineItem]
     def health_check() -> AdapterStatus
 ```
+
+`ensure_schema()` (v2) is called at the top of every `sync_to_crm` run. The
+Twenty adapter uses it to auto-provision the succession-specific custom
+fields (`successionSignalScore`, `leadType`, `timingWindow`) on the
+opportunity object; the mock adapter no-ops. This makes first-run sync
+against a fresh Twenty workspace safe without a manual metadata setup step.
 
 Design rules:
 
@@ -310,12 +337,24 @@ Implementations:
      "agent": "crm-source", "department": "CRM",
      "report_date": "YYYY-MM-DD", "headline": "…",
      "confidence": "high|medium|low",
-     "metrics": {"pipeline_counts_by_stage": {}, "overdue": 0, "…": 0},
+     "metrics": {
+       "pipeline_counts_by_stage": {},
+       "overdue": 0,
+       "pipeline_counts_by_group": {},
+       "total_tracked_people": 0,
+       "llm_provider": "mock"
+     },
      "findings": [], "decisions": [],
      "top_decisions": [], "flagged_anomalies": [],
      "yesterday_followups": [], "tomorrow_focus": []
    }
    ```
+
+   v2 (gh #12) emits BOTH `pipeline_counts_by_stage` (spec-shaped, deduped
+   by person via `weekly_plan.build_plan`) AND `pipeline_counts_by_group`
+   (richer for humans reading the report locally). Top-level `overdue` is
+   the same integer as `groups.overdue.length`. The fleet validator
+   ignores extras, so the union shape stays fleet-compatible.
 
    This passes `validate_agent_report_v1` verbatim **and** slots into the
    morning-brief synthesizer without special-casing. Our test suite validates
@@ -366,6 +405,45 @@ The Level-5 "expose uncertainty instead of acting through it" principle is
 implemented structurally: confidence scores, `unknown`/`null` enums, and the
 conservative-warmth lens rules.
 
+### 3.9 Review + Approval Layer (`src/relationship_intel/review.py`)
+
+Added in v2. The review-first flow gates CRM sync on human approval and is
+the default posture (`CRM_REVIEW_REQUIRED=true`).
+
+- **`crm_review_items` table** — one row per proposal the pipeline wants to
+  push to the CRM (`object_type` ∈ {company, person, person_note,
+  person_task, opportunity}, `local_id`, `status`, editable `payload_json`,
+  optional `reason` warning). `rebuild_review_queue(repo)` fires at the end
+  of every ingest; approve/reject/vault-only writes come from the local UI.
+- **`review-ui` CLI** — `python -m relationship_intel review-ui` boots a
+  stdlib HTTP server (`127.0.0.1:8765` by default). The page groups
+  proposals by candidate person with a "Twenty write preview" pane;
+  operators can approve-all/vault-only/reject-all per person, or edit
+  individual field payloads.
+- **Push-on-approve (gh #6, Option 1)** — clicking Approve on a bundle
+  flips the review-item statuses AND fires `sync_to_crm(approved_only=True)`
+  in the same request. Reject and Vault-only never push. On sync failure
+  the approved-status writes are rolled back (compensating action; not a
+  real DB transaction — see review.py for the concurrency + atomicity
+  trade-offs accepted for the single-operator local UI).
+- **`review-queue` CLI** — machine-readable snapshot of the pending queue
+  (`review-queue --json`). Used by external automation / Dex to check the
+  queue state without booting the UI.
+- **CRM-side gate** — `sync_to_crm` with `approved_only=True` (default in
+  production via `settings.crm_review_required`) skips any entity whose
+  review status is not `approved` and reports the count under
+  `stats["skipped_not_approved"]`. Idempotent hash-match skips are tracked
+  separately under `stats["skipped"]` so a re-sync where everything's
+  already in the CRM doesn't misfire the "awaiting approval" hint.
+- **Twenty stage safety (gh #3)** — `sync_to_crm` filters opportunities
+  whose reviewed stage is in `NO_OPP_STAGES` (`not_fit`, `stalled`,
+  `closed_lost`) and reports them under `stats["skipped_by_stage"]`
+  instead of crashing the loop on Twenty's stage-map lookup.
+
+The review layer is deliberately **local-only** today. A cloud deployment
+(§9 Phase 4+) will need multi-user concurrency handling and a real DB
+transaction around the approve+sync sequence.
+
 ---
 
 ## 4. Dex / 980Labs OS integration contract
@@ -380,8 +458,8 @@ Phase 4 integration surface now exists in 980labsOS:
 | Skill for Dex dispatch (`.claude/skills/crm-source/SKILL.md`) | 980labsOS skill routes pipeline status, last-touch lookups, and "who should James call this week" to read-only CLI queries |
 | Morning-brief fan-out (`.claude/commands/morning.md`) | 980labsOS includes `crm-source` in the parallel source list |
 | Sync queries (`delegate_task`) | CLI `query` subcommand answering entity/last-touch/next-action questions from the canonical store in <1s (no LLM needed) |
-| Async work (Kanban) | Nightly ingest + weekly plan generation as scheduled fleet jobs |
-| Memory integration | `cairns` vault mode writes L3 evidence and `unreviewed`-labeled L2 cards into Vault A → searchable by Dex's `vault-search` skill. **L1 waypoint updates are canonical-memory promotion** and are written as reviewable promotion proposals, not applied directly — per the ORD-0003 rule that unreviewed synthesis never promotes automatically |
+| Async work (Kanban) | Nightly ingest + weekly plan generation as scheduled fleet jobs. Local Mac testing uses `scripts/launchd/com.stablemischief.smcrm-daily.plist` at 05:00 (see `docs/deployment/launchd-daily.md`); sync-crm is intentionally NOT on the scheduler — it fires from the review UI on approve |
+| Memory integration | `cairns` vault mode writes L3 evidence and `unreviewed`-labeled L2 cards into Vault A → searchable by Dex's `vault-search` skill. **L1 waypoint updates are canonical-memory promotion** and are written as reviewable promotion proposals under `promotion-proposals/` (see `planning/promotion_proposal.py`), not applied directly — per the ORD-0003 rule that unreviewed synthesis never promotes automatically |
 | Context.Assemble (emerging) | 980labsOS has `scripts/context/collectors/relationships.py` as an opt-in `relationships` source feeding the unified read model from `query who-to-call --json` |
 
 The key architectural consequence **today**: the weekly planner and the
@@ -423,20 +501,22 @@ Twenty field mappings all reference them — one place to evolve.
 
 ## 6. Configuration
 
-`.env.example` (trimmed to what this phase actually uses):
+`.env.example` (v2 — reflects shipped code as of 2026-07-06):
 
 ```
-# LLM — mock until extraction quality phase begins (decision 2026-07-04)
-LLM_PROVIDER=mock            # mock | anthropic
+# LLM — mock for plumbing; codex for local-CLI-driven; anthropic for API
+LLM_PROVIDER=mock            # mock | codex | anthropic
+CODEX_MODEL=                 # optional model override for the Codex CLI
 ANTHROPIC_API_KEY=
 
 # Obsidian
 OBSIDIAN_VAULT_PATH=./output/obsidian-vault
-OBSIDIAN_MODE=plain          # plain | cairns
-STORE_RAW_TRANSCRIPTS=true   # false → store hash + metadata only
+OBSIDIAN_MODE=plain          # plain | cairns (cairns is Phase 4)
+STORE_RAW_TRANSCRIPTS=true   # false → store hash + metadata + evidence only
 
 # CRM
 CRM_PROVIDER=mock            # mock | twenty
+CRM_REVIEW_REQUIRED=true     # v2 default. sync-crm only pushes approved review items
 TWENTY_API_URL=http://localhost:3002   # local fork's remapped backend port
 TWENTY_API_KEY=
 
@@ -444,6 +524,7 @@ TWENTY_API_KEY=
 GRANOLA_API_KEY=
 
 # Pipeline
+TRANSCRIPTS_INBOX_DIR=./examples/transcripts
 DEFAULT_OWNER=James
 STALL_THRESHOLD_DAYS=21
 ```
@@ -503,11 +584,19 @@ that command set goes in this repo's `CLAUDE.md`).
 1. **Granola live access** — API key/workspace availability and 5-10 real
    James transcripts are still needed for acceptance; local folder covers until
    then.
-2. **Promotion application workflow** — weekly plan generation now writes
-   reviewable L1 promotion proposals, not canonical L1. Remaining work is the
-   future human/Dex workflow that applies or rejects a proposal.
-3. **Approval-layer shape** — ORD-0003 authority levels vs. a simpler
-   approve/reject queue in the weekly plan. Decide as usage patterns emerge.
-4. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +
+2. **Promotion application workflow** — weekly plan generation writes
+   reviewable L1 promotion proposals; remaining work is the future human/Dex
+   workflow that applies or rejects a proposal. Ties into a Cairns L1
+   `succession-pipeline.md` writer (gh #9), deferred to Phase 4.
+3. **Multi-tenant review layer** — v2's review UI (§3.9) is deliberately
+   single-operator (documented concurrency + atomicity limitations in
+   `review.py`). Cloud deployment will need multi-user handling and a real
+   DB transaction around approve+sync.
+4. **Anthropic API model id + Claude Code CLI provider** — gh #2 and gh #7
+   remain open. `AnthropicClient.MODEL` needs a valid current model id
+   before Phase 1 can use the paid path; a `ClaudeCodeExecClient` mirror
+   of `CodexExecClient` would let developers drive extraction through a
+   Claude Max subscription.
+5. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +
    delegate_task surface serves any orchestrator; no coupling to Dex
    specifically.
