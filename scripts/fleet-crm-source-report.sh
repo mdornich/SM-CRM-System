@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-REPO_DIR="/Users/mitchdornich/Documents/GitHub/SM-CRM-System"
+REPO_DIR="/Users/mitchdornich/GitHub/SM-CRM-System"
 cd "$REPO_DIR"
 
 set -a
