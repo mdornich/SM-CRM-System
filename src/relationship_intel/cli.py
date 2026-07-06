@@ -190,15 +190,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="read-only go-live readiness checks",
         parents=[output_parent],
     )
-    sub.add_parser(
+    provision_twenty = sub.add_parser(
         "provision-twenty",
         help=(
             "idempotently provision Twenty's schema for the review-in-Twenty "
-            "flow (Phase 1: reviewStatus custom field on Person/Company/"
-            "Opportunity, WeeklyPlan custom object, Kanban views, default-"
-            "view filters). Requires TWENTY_API_KEY."
+            "flow (Phase 1.5: reviewStatus custom field on Person/Company/"
+            "Opportunity + a single Home dashboard with a pending-review "
+            "widget and a weekly-plan widget). Requires TWENTY_API_KEY."
         ),
         parents=[output_parent],
+    )
+    provision_twenty.add_argument(
+        "--cleanup",
+        action="store_true",
+        help=(
+            "after provisioning, delete Phase 1's dead artifacts (weeklyPlan "
+            "custom object, its manually-published record, and the three "
+            "'Review queue' KANBAN views on Person/Company/Opportunity)."
+        ),
+    )
+    provision_twenty.add_argument(
+        "--backfill-approved",
+        action="store_true",
+        help=(
+            "after provisioning, flip every pre-existing Twenty record "
+            "with reviewStatus=PENDING to APPROVED. Use once, after adding "
+            "the reviewStatus field, so pre-Phase-1 records stop leaking "
+            "into the pending queue."
+        ),
     )
     sub.add_parser(
         "review-queue",
@@ -420,29 +439,87 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "provision-twenty":
             from relationship_intel.crm.twenty_provisioner import TwentyProvisioner
+            from relationship_intel.planning import weekly_plan as _weekly_plan
+            from relationship_intel.util.dates import monday_of_week
 
             if not settings.twenty_api_key:
                 print("TWENTY_API_KEY is not set; see .env.example.", file=sys.stderr)
                 return 2
+            # Load the most-recent stored plan for the current week (or the
+            # last stored plan if this week's isn't ready yet) and render it
+            # to markdown so the dashboard's rich-text widget shows the
+            # actual plan James is working from — not a placeholder.
+            rich_text_body: str | None = None
+            repo = pipeline.open_repo(settings)
+            week_start_iso = monday_of_week(date.today()).isoformat()
+            plans = repo.plans_for_week(week_start_iso)
+            if not plans:
+                # Fall back to the most-recent plan on record so the widget
+                # is never empty just because Monday hasn't run yet.
+                fallback = repo.conn.execute(
+                    "SELECT owner, week_start, plan_json FROM plans "
+                    "ORDER BY week_start DESC LIMIT 1"
+                ).fetchone()
+                if fallback:
+                    plans = [fallback]
+            if plans:
+                plan_row = plans[0]
+                try:
+                    plan_dict = json.loads(plan_row["plan_json"])
+                    rich_text_body = _weekly_plan.to_markdown(plan_dict)
+                except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                    print(
+                        f"Warning: could not render weekly plan for widget: {exc}",
+                        file=sys.stderr,
+                    )
             provisioner = TwentyProvisioner(settings.twenty_api_url, settings.twenty_api_key)
-            report = provisioner.provision_all()
+            report = provisioner.provision_all(rich_text_body=rich_text_body)
+            cleanup_report = None
+            if args.cleanup:
+                cleanup_report = provisioner.cleanup_phase1_artifacts()
+                report["cleanup"] = cleanup_report
+            backfill_report = None
+            if args.backfill_approved:
+                backfill_report = provisioner.backfill_pending_to_approved()
+                report["backfill"] = backfill_report
             if args.json_output:
                 _print_json(report)
             else:
                 print("Twenty provisioning report:")
                 for entry in report["review_status_fields"]:
                     print(f"  reviewStatus on {entry['object']}: {entry['action']}")
-                wp = report["weekly_plan"]
-                print(f"  weeklyPlan object: {wp['object_action']}")
-                for f in wp["fields"]:
-                    print(f"    - field {f['field']}: {f['action']}")
-                for entry in report["kanban_views"]:
-                    print(f"  {entry['view']} view on {entry['object']}: {entry['action']}")
+                hd = report["home_dashboard"]
+                print(f"  home dashboard '{hd['name']}':")
+                print(f"    - page layout: {hd['page_layout']['action']}")
+                print(f"    - tab: {hd['tab']['action']}")
+                print(f"    - review-ui iframe widget: {hd['record_table_widget']['action']}")
+                print(f"    - rich-text widget: {hd['rich_text_widget']['action']}")
+                print(f"    - dashboard record: {hd['dashboard']['action']}")
+                print(f"    - sidebar nav item: {hd['navigation_menu_item']['action']}")
                 for entry in report["default_view_filters"]:
                     print(
                         f"  default-view IS_NOT PENDING filter on {entry['object']}: "
                         f"{entry['action']}"
                     )
+                if cleanup_report is not None:
+                    print("Phase 1 cleanup:")
+                    print(
+                        f"  legacy weeklyPlan record: "
+                        f"{cleanup_report['legacy_weekly_plan_record']['action']}"
+                    )
+                    print(f"  weeklyPlan object: {cleanup_report['weekly_plan_object']['action']}")
+                    for entry in cleanup_report["kanban_views"]:
+                        print(f"  Review-queue kanban on {entry['object']}: {entry['action']}")
+                if backfill_report is not None:
+                    print("PENDING → APPROVED backfill:")
+                    for entry in backfill_report["objects"]:
+                        line = (
+                            f"  {entry['object']}: {entry['patched']} patched, "
+                            f"{entry['skipped']} skipped"
+                        )
+                        if entry["errors"]:
+                            line += f", errors: {len(entry['errors'])}"
+                        print(line)
 
         elif args.command == "review-queue":
             summary = review_summary(settings)
