@@ -21,6 +21,24 @@ def _payload_hash(payload: dict) -> str:
     return short_hash(json.dumps(payload, sort_keys=True))
 
 
+def _resolve_person_ref(adapter: CRMAdapter, payload: dict) -> CRMRef:
+    """Prefer the reviewer-confirmed `existing_crm_ref` from the review UI
+    (gh #15) so we never create a duplicate Twenty contact for someone the
+    review workflow already flagged as a follow-up. Falls back to the
+    adapter's find_or_create when no ref is cached."""
+    existing = payload.get("existing_crm_ref")
+    if existing and existing.get("crm_id"):
+        return CRMRef(adapter.provider, "person", existing["crm_id"], existing.get("url"))
+    return adapter.find_or_create_contact(payload)
+
+
+def _resolve_company_ref(adapter: CRMAdapter, payload: dict) -> CRMRef:
+    existing = payload.get("existing_crm_ref")
+    if existing and existing.get("crm_id"):
+        return CRMRef(adapter.provider, "company", existing["crm_id"], existing.get("url"))
+    return adapter.find_or_create_company(payload)
+
+
 def _sync_object(
     repo,
     adapter,
@@ -74,7 +92,7 @@ def sync_to_crm(
             continue
         review = repo.review_item("company", company.id)
         payload = (
-            review.payload
+            dict(review.payload)
             if approved_only and review
             else {"name": company.name, "domain": company.domain, "industry": company.industry}
         )
@@ -84,7 +102,7 @@ def sync_to_crm(
             "company",
             company.id,
             payload,
-            lambda p: adapter.find_or_create_company(p),
+            lambda p: _resolve_company_ref(adapter, p),
         )
         company_refs[company.id] = state["crm_id"]
         stats["companies" if pushed else "skipped"] += 1
@@ -111,7 +129,7 @@ def sync_to_crm(
             "person",
             person.id,
             payload,
-            lambda p: adapter.find_or_create_contact(p),
+            lambda p: _resolve_person_ref(adapter, p),
         )
         person_refs[person.id] = state["crm_id"]
         stats["people" if pushed else "skipped"] += 1

@@ -46,6 +46,19 @@ def make_adapter(settings: Settings, crm: str | None = None) -> CRMAdapter:
     return MockCRMAdapter(settings.mock_crm_path)
 
 
+def try_make_adapter(settings: Settings, crm: str | None = None) -> CRMAdapter | None:
+    """Best-effort adapter construction for read-only enrichment paths (gh #15).
+    Returns None if the adapter can't be built (e.g., TwentyCRMAdapter without
+    an API key). Callers that only need read-only lookups can degrade
+    gracefully — the review UI keeps working without the 'already in CRM'
+    badge when Twenty isn't reachable/configured."""
+    try:
+        return make_adapter(settings, crm)
+    except Exception as exc:  # noqa: BLE001 - best-effort by design
+        logger.info("adapter unavailable for enrichment: %s", type(exc).__name__)
+        return None
+
+
 def run_init(settings: Settings, vault: Path | None = None) -> Path:
     vault_root = vault or settings.obsidian_vault_path
     writer = VaultWriter(vault_root, settings.obsidian_mode)
@@ -100,7 +113,7 @@ def run_ingest_source(
         # registered and would be skipped as duplicates on the retry run).
         _write_transcript_notes(repo, writer, processed, settings)
         _write_entity_notes(repo, writer, settings.llm_provider, settings.default_owner)
-        rebuild_review_queue(repo)
+        rebuild_review_queue(repo, adapter=try_make_adapter(settings))
     return stats
 
 
@@ -235,10 +248,21 @@ def run_sync(settings: Settings, crm: str | None = None) -> dict:
     )
 
 
-def rebuild_review_queue(repo: Repository) -> dict:
+def rebuild_review_queue(repo: Repository, adapter: CRMAdapter | None = None) -> dict:
+    """Rebuild the review queue from the canonical store.
+
+    When `adapter` is supplied, the queue is also enriched with
+    `existing_crm_ref` for any person/company already in the CRM (gh #15).
+    The lookup is cached in the payload so subsequent rebuilds skip the
+    (potentially slow) CRM call — a re-lookup only fires when the review
+    item has no cached `existing_crm_ref` yet.
+    """
     stats = {"people": 0, "companies": 0, "opportunities": 0, "notes": 0, "tasks": 0}
     for company in repo.company_records():
         payload = {"name": company.name, "domain": company.domain, "industry": company.industry}
+        _apply_existing_crm_ref(
+            repo, "company", company.id, payload, adapter, _lookup_existing_company
+        )
         repo.upsert_review_item(
             "company",
             company.id,
@@ -257,6 +281,9 @@ def rebuild_review_queue(repo: Repository) -> dict:
             "company_id": person.company_id,
             "company_name": person.company_name,
         }
+        _apply_existing_crm_ref(
+            repo, "person", person.id, person_payload, adapter, _lookup_existing_person
+        )
         reason = _person_review_reason(person)
         repo.upsert_review_item(
             "person",
@@ -328,6 +355,36 @@ def rebuild_review_queue(repo: Repository) -> dict:
         )
         stats["opportunities"] += 1
     return stats
+
+
+def _apply_existing_crm_ref(
+    repo: Repository,
+    object_type: str,
+    local_id: int,
+    payload: dict,
+    adapter: CRMAdapter | None,
+    lookup_fn,
+) -> None:
+    """Populate `payload['existing_crm_ref']` when the entity already exists
+    in the CRM (gh #15). Uses the prior review item's cached ref when
+    available so we don't spam the CRM on every review-UI page render."""
+    if adapter is None:
+        return
+    prior = repo.review_item(object_type, local_id)
+    if prior and prior.payload.get("existing_crm_ref") is not None:
+        payload["existing_crm_ref"] = prior.payload["existing_crm_ref"]
+        return
+    existing = lookup_fn(adapter, payload)
+    if existing:
+        payload["existing_crm_ref"] = existing
+
+
+def _lookup_existing_person(adapter: CRMAdapter, payload: dict) -> dict | None:
+    return adapter.find_contact({"name": payload.get("name"), "email": payload.get("email")})
+
+
+def _lookup_existing_company(adapter: CRMAdapter, payload: dict) -> dict | None:
+    return adapter.find_company({"name": payload.get("name"), "domain": payload.get("domain")})
 
 
 def _person_review_reason(person) -> str | None:

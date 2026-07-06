@@ -227,6 +227,68 @@ class TwentyCRMAdapter(CRMAdapter):
             created.append(field["name"])
         return {"created": created, "existing": existing}
 
+    def find_contact(self, person: dict) -> dict | None:
+        # Read-only dedup for the review UI (gh #15). Never creates. Errors are
+        # swallowed and logged so a Twenty outage degrades gracefully — the
+        # review UI still renders, just without the "already in CRM" badge.
+        try:
+            email = (person.get("email") or "").lower()
+            safe_email = _filter_safe(email)
+            if safe_email:
+                record = self._find_one("people", f"emails.primaryEmail[eq]:{safe_email}")
+                if record:
+                    return self._twenty_person_dict(record)
+            first, _, last = (person.get("name") or "").partition(" ")
+            safe_first, safe_last = _filter_safe(first), _filter_safe(last)
+            if safe_first and safe_last:
+                record = self._find_one(
+                    "people",
+                    f"and(name.firstName[eq]:{safe_first},name.lastName[eq]:{safe_last})",
+                )
+                if record:
+                    return self._twenty_person_dict(record)
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            logger.info("twenty find_contact skipped: %s", type(exc).__name__)
+        return None
+
+    def find_company(self, company: dict) -> dict | None:
+        try:
+            domain = _filter_safe(company.get("domain"))
+            if domain:
+                record = self._find_one(
+                    "companies", f"domainName.primaryLinkUrl[eq]:https://{domain}"
+                )
+                if record:
+                    return self._twenty_company_dict(record)
+            safe_name = _filter_safe(company.get("name"))
+            if safe_name:
+                record = self._find_one("companies", f"name[eq]:{safe_name}")
+                if record:
+                    return self._twenty_company_dict(record)
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            logger.info("twenty find_company skipped: %s", type(exc).__name__)
+        return None
+
+    def _twenty_person_dict(self, record: dict) -> dict:
+        name_obj = record.get("name") or {}
+        emails_obj = record.get("emails") or {}
+        return {
+            "crm_id": str(record["id"]),
+            "url": None,
+            "name": f"{name_obj.get('firstName', '')} {name_obj.get('lastName', '')}".strip(),
+            "email": emails_obj.get("primaryEmail"),
+            "company_name": (record.get("company") or {}).get("name"),
+        }
+
+    def _twenty_company_dict(self, record: dict) -> dict:
+        domain_obj = record.get("domainName") or {}
+        return {
+            "crm_id": str(record["id"]),
+            "url": None,
+            "name": record.get("name"),
+            "domain": domain_obj.get("primaryLinkUrl"),
+        }
+
     def find_or_create_contact(self, person: dict) -> CRMRef:
         email = (person.get("email") or "").lower()
         safe_email = _filter_safe(email)

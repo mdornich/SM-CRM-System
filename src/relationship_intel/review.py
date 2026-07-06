@@ -15,7 +15,12 @@ from urllib.parse import parse_qs, urlparse
 
 from relationship_intel.config import Settings
 from relationship_intel.crm.sync import sync_to_crm
-from relationship_intel.pipeline import make_adapter, open_repo, rebuild_review_queue
+from relationship_intel.pipeline import (
+    make_adapter,
+    open_repo,
+    rebuild_review_queue,
+    try_make_adapter,
+)
 from relationship_intel.store.models import CRMReviewItem
 
 STATUSES = ("pending", "approved", "rejected", "obsidian_only")
@@ -77,7 +82,7 @@ FIELD_ORDER = (
 
 def review_summary(settings: Settings) -> dict:
     repo = open_repo(settings)
-    rebuild_review_queue(repo)
+    rebuild_review_queue(repo, adapter=try_make_adapter(settings))
     items = repo.review_items()
     by_status = {status: 0 for status in STATUSES}
     for item in items:
@@ -87,7 +92,7 @@ def review_summary(settings: Settings) -> dict:
 
 def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 8765) -> None:
     repo = open_repo(settings)
-    rebuild_review_queue(repo)
+    rebuild_review_queue(repo, adapter=try_make_adapter(settings))
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - stdlib hook
@@ -224,7 +229,7 @@ def _one(form: dict[str, list[str]], key: str) -> str:
 
 def _render_page(settings: Settings, message: str | None = None, error: str | None = None) -> str:
     repo = open_repo(settings)
-    rebuild_review_queue(repo)
+    rebuild_review_queue(repo, adapter=try_make_adapter(settings))
     items = repo.review_items()
     item_map = {(item.object_type, item.local_id): item for item in items}
     people = repo.people_records()
@@ -333,6 +338,7 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
     warnings = _render_warnings(item.reason for item in review_items)
     crm_preview = _render_crm_preview(review_items)
     evidence = _render_evidence(person.evidence, person.transcripts)
+    existing_badge = _render_existing_badge(person_item, company_item)
     fields = "\n".join(
         _render_review_item(item, compact=item.object_type in {"person", "company"})
         for item in review_items
@@ -347,6 +353,7 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
     <div class="candidate-id">
       <h3>{html.escape(person.name)}</h3>
       <p>{html.escape(company_name)}{headline}</p>
+      {existing_badge}
     </div>
     <div class="candidate-status">
       {_status_pill(person_item.status)}
@@ -412,6 +419,32 @@ def _render_standalone_opportunity(item: CRMReviewItem, opp) -> str:
   </div>
   {_render_review_item(item)}
 </article>"""
+
+
+def _render_existing_badge(*items) -> str:
+    """Show a "follow-up with existing CRM contact" badge when the review
+    item's payload already carries an `existing_crm_ref` (populated by
+    `_apply_existing_crm_ref` in pipeline.py — gh #15). One badge per
+    person bundle; combines all existing refs across person + company."""
+    labels: list[str] = []
+    for item in items:
+        if not item:
+            continue
+        ref = item.payload.get("existing_crm_ref") if isinstance(item.payload, dict) else None
+        if not ref:
+            continue
+        label = CRM_OBJECT_LABELS.get(item.object_type, item.object_type)
+        name = ref.get("name") or "unknown"
+        crm_id = ref.get("crm_id") or ""
+        url = ref.get("url")
+        display = html.escape(f"{label}: {name} (id={crm_id})")
+        labels.append(f'<a href="{html.escape(url)}">{display}</a>' if url else display)
+    if not labels:
+        return ""
+    return (
+        '<p class="existing-badge">'
+        "Follow-up with existing CRM record — " + " · ".join(labels) + "</p>"
+    )
 
 
 def _person_headline(person, company, profile: dict) -> str:
@@ -733,6 +766,18 @@ def _css() -> str:
       font-weight: 700;
       white-space: nowrap;
     }
+    .existing-badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 3px 8px;
+      background: #eff5fb;
+      border: 1px solid #bcd1e5;
+      border-radius: 4px;
+      color: var(--steel);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .existing-badge a { color: var(--blue); text-decoration: none; }
     .pill.approved { color: var(--green); border-color: #9ac8aa; background: #eff8f2; }
     .pill.rejected { color: var(--red); border-color: #dda19b; background: #fff3f1; }
     .pill.obsidian-only { color: var(--violet); border-color: #bdb5e5; background: #f5f2ff; }

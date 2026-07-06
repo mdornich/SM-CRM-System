@@ -67,6 +67,18 @@ class CRMAdapter(ABC):
     @abstractmethod
     def find_or_create_company(self, company: dict) -> CRMRef: ...
 
+    def find_contact(self, person: dict) -> dict | None:
+        """Read-only lookup used by the review UI to detect follow-ups against
+        contacts already in the CRM (gh #15). Returns an enrichment dict
+        (crm_id, url, name, company_name, email) or None. Default: no-op
+        returning None; adapters that support lookup should override."""
+        return None
+
+    def find_company(self, company: dict) -> dict | None:
+        """Read-only lookup counterpart to find_contact (gh #15). Returns an
+        enrichment dict (crm_id, url, name, domain) or None."""
+        return None
+
     @abstractmethod
     def create_or_update_opportunity(self, opportunity: dict) -> CRMRef: ...
 

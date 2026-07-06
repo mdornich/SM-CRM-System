@@ -64,6 +64,31 @@ class MockCRMAdapter(CRMAdapter):
         ref, _ = self._find_or_create("companies", key, company)
         return ref
 
+    def find_contact(self, person: dict) -> dict | None:
+        # Read-only dedup lookup for the review UI (gh #15).
+        email = (person.get("email") or "").lower()
+        name = (person.get("name") or "").lower()
+        for record in self._load("people").values():
+            record_email = (record.get("email") or "").lower()
+            record_name = (record.get("name") or "").lower()
+            if email and record_email == email:
+                return _existing_person_dict(record)
+            if not email and name and record_name == name:
+                return _existing_person_dict(record)
+        return None
+
+    def find_company(self, company: dict) -> dict | None:
+        domain = (company.get("domain") or "").lower()
+        name = (company.get("name") or "").lower()
+        for record in self._load("companies").values():
+            record_domain = (record.get("domain") or "").lower()
+            record_name = (record.get("name") or "").lower()
+            if domain and record_domain == domain:
+                return _existing_company_dict(record)
+            if not domain and name and record_name == name:
+                return _existing_company_dict(record)
+        return None
+
     def create_or_update_opportunity(self, opportunity: dict) -> CRMRef:
         key = opportunity["name"].lower()
         data = self._load("opportunities")
@@ -152,3 +177,22 @@ class MockCRMAdapter(CRMAdapter):
 
     def health_check(self) -> AdapterStatus:
         return AdapterStatus(ok=True, detail=f"mock store at {self.root}")
+
+
+def _existing_person_dict(record: dict) -> dict:
+    return {
+        "crm_id": record["id"],
+        "url": None,
+        "name": record.get("name"),
+        "email": record.get("email"),
+        "company_name": record.get("company_name"),
+    }
+
+
+def _existing_company_dict(record: dict) -> dict:
+    return {
+        "crm_id": record["id"],
+        "url": None,
+        "name": record.get("name"),
+        "domain": record.get("domain"),
+    }
