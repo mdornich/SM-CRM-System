@@ -164,6 +164,21 @@ def _handle_bundle(settings: Settings, form: dict[str, list[str]]) -> tuple[int,
     # status back to its prior value BEFORE re-raising, so an error banner in
     # the UI never leaves half-approved items in the DB waiting to leak on the
     # next click.
+    #
+    # KNOWN LIMITATIONS (acceptable for the local single-operator UI; revisit
+    # if this ever runs multi-tenant):
+    #   1. Rollback is a compensating write loop, not a real DB transaction —
+    #      set_review_item autocommits per row, so a mid-rollback crash could
+    #      leave a subset flipped. A proper savepoint would require refactoring
+    #      _handle_sync to share a Repository/connection with _handle_bundle.
+    #   2. Rollback uses payloads captured at bundle-entry time; a concurrent
+    #      POST /item from another browser tab during the (slow) sync call
+    #      would have its payload edit clobbered on rollback. Not a practical
+    #      concern for the single-operator UI Mitch/James run today.
+    #   3. crm_sync_state writes from partially-succeeded syncs are NOT rolled
+    #      back — the next sync of those entities may hash-match and skip.
+    #      This is a limitation of the compensating approach; the operator
+    #      workaround is to re-edit the affected item to bust the hash.
     repo = open_repo(settings)
     items_to_update: list[tuple[str, int, str, dict]] = []
     for raw in form.get("item", []):

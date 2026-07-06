@@ -43,8 +43,9 @@ def test_review_required_sync_only_pushes_approved_items(settings, samples_dir):
         "opportunities": 0,
         "notes": 0,
         "tasks": 0,
-        "skipped": 8,
+        "skipped": 0,
         "skipped_by_stage": 0,
+        "skipped_not_approved": 8,
     }
 
     repo = pipeline.open_repo(reviewed)
@@ -196,6 +197,79 @@ def test_pipeline_items_round_trip(settings, samples_dir):
     assert items[0].person_name == "Bob Smith"
     assert items[0].lead_type == "warm"
     assert items[0].crm_ref is not None
+
+
+def test_reviewer_cleared_stage_defensively_falls_back_to_db_stage(settings, samples_dir):
+    """Reviewer clears the stage field (payload = {'stage': None}). The
+    NO_OPP_STAGES filter must not fall through — we defensively fall back to
+    the DB stage so a None-stage payload never reaches the adapter.
+    (Verified finding from /code-review round 2.)"""
+    from dataclasses import replace
+
+    from relationship_intel.crm.mock_adapter import MockCRMAdapter
+    from relationship_intel.crm.sync import sync_to_crm
+
+    reviewed = replace(settings, crm_review_required=True)
+    pipeline.run_ingest(reviewed, samples_dir)
+    repo = pipeline.open_repo(reviewed)
+    bob = next(p for p in repo.people_records() if p.name == "Bob Smith")
+    company = next(c for c in repo.company_records() if c.name == "Smith HVAC")
+    (opp,) = repo.opportunity_records()
+    assert opp.stage not in {
+        "not_fit",
+        "stalled",
+        "closed_lost",
+    }  # sanity: baseline is a good stage
+
+    # Reviewer clears the stage in the UI form; payload contains stage=None.
+    repo.set_review_item(
+        "opportunity",
+        opp.id,
+        "approved",
+        {"name": opp.name, "stage": None, "lead_type": opp.lead_type},
+    )
+    repo.set_review_item("person", bob.id, "approved", {"name": bob.name})
+    repo.set_review_item("company", company.id, "approved", {"name": company.name})
+
+    class FakeTwenty(MockCRMAdapter):
+        provider = "twenty"
+
+    adapter = FakeTwenty(reviewed.mock_crm_path)
+    stats = sync_to_crm(repo, adapter, reviewed.default_owner, approved_only=True)
+    # Baseline stage is not in NO_OPP_STAGES, so the opp still pushes — the
+    # regression we're guarding is "cleared stage crashes the sync loop".
+    assert stats["opportunities"] == 1
+    assert stats["skipped_by_stage"] == 0
+
+
+def test_review_required_warning_not_fired_on_idempotent_resync(settings, samples_dir, caplog):
+    """After a successful sync where everything's approved and pushed, a
+    second run is all hash-match skips. The 'review-required mode is on'
+    warning must NOT fire — those items ARE approved.
+    (Verified finding from /code-review round 2.)"""
+    import logging
+    from dataclasses import replace
+
+    reviewed = replace(settings, crm_review_required=True)
+    pipeline.run_ingest(reviewed, samples_dir)
+    repo = pipeline.open_repo(reviewed)
+
+    # Approve everything the ingest produced — the warning is only about the
+    # "you skipped some because they weren't approved" case.
+    for item in repo.review_items():
+        repo.set_review_item(item.object_type, item.local_id, "approved", item.payload)
+
+    # First sync: everything approved, everything pushes.
+    first = pipeline.run_sync(reviewed, "mock")
+    assert first["skipped_not_approved"] == 0
+
+    # Second sync: all hash-match skips. No warning.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        second = pipeline.run_sync(reviewed, "mock")
+
+    assert second["skipped_not_approved"] == 0
+    assert not any("review-required mode is on" in record.message for record in caplog.records)
 
 
 def test_reviewer_stage_edit_to_no_opp_stage_is_filtered_for_twenty(settings, samples_dir):

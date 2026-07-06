@@ -56,6 +56,7 @@ def sync_to_crm(
         "tasks": 0,
         "skipped": 0,
         "skipped_by_stage": 0,
+        "skipped_not_approved": 0,
     }
     twenty_provider = adapter.provider == "twenty"
     adapter.ensure_schema()
@@ -69,7 +70,7 @@ def sync_to_crm(
     company_refs: dict[int, str] = {}
     for company in repo.company_records():
         if approved_companies is not None and company.id not in approved_companies:
-            stats["skipped"] += 1
+            stats["skipped_not_approved"] += 1
             continue
         review = repo.review_item("company", company.id)
         payload = (
@@ -91,7 +92,7 @@ def sync_to_crm(
     person_refs: dict[int, str] = {}
     for person in repo.people_records():
         if approved_people is not None and person.id not in approved_people:
-            stats["skipped"] += 1
+            stats["skipped_not_approved"] += 1
             continue
         review = repo.review_item("person", person.id)
         payload = (
@@ -195,7 +196,7 @@ def sync_to_crm(
 
     for opp in repo.opportunity_records():
         if approved_opps is not None and opp.id not in approved_opps:
-            stats["skipped"] += 1
+            stats["skipped_not_approved"] += 1
             continue
         review = repo.review_item("opportunity", opp.id)
         payload = (
@@ -218,8 +219,11 @@ def sync_to_crm(
         # Twenty's default board has no Lost/Stalled/Not-fit column; skip these
         # rather than crash the adapter. Check the REVIEWED stage (payload)
         # rather than the raw DB stage so a reviewer's edit doesn't bypass the
-        # filter and detonate the sync mid-loop.
-        effective_stage = payload.get("stage", opp.stage)
+        # filter and detonate the sync mid-loop. `or opp.stage` (not
+        # `dict.get(k, default)`) because a reviewer can clear the field to
+        # an explicit None — we defensively fall back to the DB value rather
+        # than push a None-stage payload the adapter will choke on.
+        effective_stage = payload.get("stage") or opp.stage
         if twenty_provider and effective_stage in NO_OPP_STAGES:
             stats["skipped_by_stage"] += 1
             logger.info(
@@ -246,16 +250,28 @@ def sync_to_crm(
         stats["opportunities" if pushed else "skipped"] += 1
 
     logger.info("CRM sync (%s): %s", adapter.provider, stats)
-    # If review-gated and nothing landed, surface a clear hint so a user who
-    # inherited the default (CRM_REVIEW_REQUIRED=true) doesn't stare at empty
-    # stats and think extraction produced nothing.
-    pushed_total = stats["companies"] + stats["people"] + stats["opportunities"]
-    if approved_only and pushed_total == 0 and stats["skipped"] > 0:
+    # If review-gated and nothing landed AND we skipped items because they
+    # weren't approved, surface a clear hint so a user who inherited the
+    # flipped default (CRM_REVIEW_REQUIRED=true) doesn't stare at empty
+    # stats and think extraction produced nothing. Gates on
+    # `skipped_not_approved` specifically — NOT the general `skipped`
+    # counter — so an idempotent re-sync where everything is already in
+    # the CRM (all hash-matches → stats["skipped"]) doesn't misfire this
+    # warning. `pushed_total` includes notes and tasks so a run that only
+    # writes new notes/tasks doesn't trip the "pushed 0" branch either.
+    pushed_total = (
+        stats["companies"]
+        + stats["people"]
+        + stats["opportunities"]
+        + stats["notes"]
+        + stats["tasks"]
+    )
+    if approved_only and pushed_total == 0 and stats["skipped_not_approved"] > 0:
         logger.warning(
-            "sync_to_crm found %d pending review item(s) but pushed 0 — "
+            "sync_to_crm found %d unapproved review item(s) and pushed 0 — "
             "review-required mode is on (CRM_REVIEW_REQUIRED=true). "
             "Approve items in the review UI (relationship_intel review-ui) "
             "or set CRM_REVIEW_REQUIRED=false to bypass.",
-            stats["skipped"],
+            stats["skipped_not_approved"],
         )
     return stats

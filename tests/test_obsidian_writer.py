@@ -124,6 +124,39 @@ def test_same_name_people_get_distinct_notes(tmp_path, settings):
     assert len(notes) == 2
 
 
+def test_person_owner_reflects_latest_opportunity_not_oldest(tmp_path):
+    """A handoff — new opportunity with a new owner — must flow through to
+    the person note's owner FM. (Verified finding from /code-review round 2.)"""
+    from relationship_intel.extraction.schemas import Company, Person
+    from relationship_intel.store.db import connect
+    from relationship_intel.store.repository import Repository
+
+    repo = Repository(connect(tmp_path / "handoff.db"))
+    company_id, _ = repo.resolve_company(Company(name="Smith HVAC"))
+    person_id, _ = repo.resolve_person(Person(name="Bob Smith"), company_id)
+    # First (oldest) opportunity owned by mitch.
+    repo.upsert_opportunity(
+        "Smith HVAC — Bob Smith — Succession",
+        person_id,
+        company_id,
+        {"stage": "closed_lost", "lead_type": "cold", "succession_signal_score": 10},
+        "mitch@nine80.ai",
+    )
+    # Second (latest) opportunity — Bob was handed to alice.
+    repo.upsert_opportunity(
+        "Smith HVAC — Bob Smith — Round 2",
+        person_id,
+        company_id,
+        {"stage": "discovery", "lead_type": "warm", "succession_signal_score": 60},
+        "alice@nine80.ai",
+    )
+    (person,) = [p for p in repo.people_records() if p.id == person_id]
+    assert person.owner == "alice@nine80.ai"
+
+    (company,) = [c for c in repo.company_records() if c.id == company_id]
+    assert company.owner == "alice@nine80.ai"
+
+
 def test_yaml_value_escapes_newlines_and_backslashes():
     from relationship_intel.util.markdown import yaml_value
 

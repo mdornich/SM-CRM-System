@@ -462,11 +462,13 @@ class Repository:
                 "SELECT max(meeting_date) AS d FROM interactions WHERE person_id = ?",
                 (row["id"],),
             ).fetchone()
-            # Person owner comes from any linked opportunity (any owner set wins);
-            # falls back to the pipeline default_owner at render time when None.
+            # Person owner comes from the LATEST linked opportunity (highest id
+            # = most recently upserted), so a handoff to a new rep flows through
+            # to the person note on the next regenerate. Falls back to the
+            # pipeline default_owner at render time when None.
             owner_row = self.conn.execute(
                 "SELECT owner FROM opportunities WHERE person_id = ?"
-                " AND owner IS NOT NULL ORDER BY id LIMIT 1",
+                " AND owner IS NOT NULL ORDER BY id DESC LIMIT 1",
                 (row["id"],),
             ).fetchone()
             evidence: list[str] = []
@@ -511,15 +513,17 @@ class Repository:
             "SELECT id, name FROM opportunities ORDER BY id"
         ).fetchall()
         opp_slugs = assign_slugs([(r["id"], r["name"]) for r in opp_rows_all])
-        # Stage precedence for the aggregate company-card FM. A closed-won
-        # relationship is the strongest signal to headline (you've done
-        # business with them); active pipeline stages follow by advancement;
-        # terminal negative stages sink to the bottom.
+        # Stage precedence for the aggregate company-card FM. Live pipeline
+        # stages outrank a past closed_won (an in-flight deal is more
+        # actionable than a historical win), but closed_won still beats
+        # early/passive stages (nurture, new) so a company with a real
+        # relationship never gets mis-labelled "nurture" on its card.
+        # Terminal negative stages sink to the bottom.
         stage_rank = {
-            "closed_won": 10,
-            "active_opportunity": 7,
-            "qualified": 6,
-            "discovery": 5,
+            "active_opportunity": 8,
+            "qualified": 7,
+            "discovery": 6,
+            "closed_won": 5,
             "nurture": 4,
             "new": 3,
             "stalled": 2,
@@ -545,7 +549,10 @@ class Repository:
             if opp_rows:
                 best = max(opp_rows, key=lambda o: stage_rank.get(o["stage"], 0))
                 company_stage = best["stage"]
-                for o in opp_rows:
+                # Take owner from the LATEST opportunity with an owner set
+                # (opp_rows come out ORDER BY id ASC, so reverse to pick the
+                # most recent). Handoff-safe: a new opp with a new rep wins.
+                for o in reversed(opp_rows):
                     if o["owner"]:
                         company_owner = o["owner"]
                         break
