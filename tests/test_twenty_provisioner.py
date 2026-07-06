@@ -199,11 +199,21 @@ def test_provision_all_from_empty_workspace_creates_everything():
         assert kanban[0]["mainGroupByFieldMetadataId"]  # grouped on the review field
         assert kanban[0]["icon"]  # Twenty's CreateViewInput requires it
 
-    # Default TABLE view got the IS_NOT PENDING filter.
+    # Default TABLE views are NOT filtered by default — the IS_NOT PENDING
+    # operand is NULL-unsafe and would hide every legacy record.
     for object_name, filter_result in zip(
         REVIEW_STATUS_TARGET_OBJECTS, result["default_view_filters"], strict=True
     ):
         assert filter_result["object"] == object_name
+        assert filter_result["action"] == "skipped_nullsafe"
+
+
+def test_provision_all_opt_in_filter_creates_it():
+    """The dangerous default-view filter is behind an opt-in flag; when
+    passed explicitly it fires the POST /viewFilters call."""
+    state = _State()
+    result = _provisioner(state.handler()).provision_all(add_default_view_filter=True)
+    for filter_result in result["default_view_filters"]:
         assert filter_result["action"] == "created"
 
 
@@ -226,7 +236,8 @@ def test_provision_all_is_idempotent():
     assert second["weekly_plan"]["object_action"] == "existing"
     assert all(f["action"] == "existing" for f in second["weekly_plan"]["fields"])
     assert all(v["action"] == "existing" for v in second["kanban_views"])
-    assert all(v["action"] == "existing" for v in second["default_view_filters"])
+    # Default view filter is skipped-by-default; second run reports the same.
+    assert all(v["action"] == "skipped_nullsafe" for v in second["default_view_filters"])
 
 
 def test_missing_target_object_raises():

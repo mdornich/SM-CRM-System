@@ -246,7 +246,27 @@ class TwentyProvisioner:
     def ensure_pending_filter_on_default_view(self, object_name: str) -> dict:
         """Add `reviewStatus != PENDING` to the object's default TABLE view
         so unreviewed extractions stay hidden from search / reports until
-        James approves them."""
+        James approves them.
+
+        DANGER — NULL semantics: Twenty's `IS_NOT` operand is standard SQL
+        `!= 'PENDING'`, which is NULL-unsafe: existing records with
+        `reviewStatus = NULL` (never touched by the pipeline) evaluate the
+        comparison as NULL/unknown and are EXCLUDED from the view. Applied
+        to a workspace that already has records, this filter hides them
+        all and breaks the default People / Companies / Opportunities
+        views.
+
+        Skipped by default (`enabled=False`). Two safe ways to enable it
+        in Phase 2:
+          1. Backfill: sweep every existing record and set
+             `reviewStatus = APPROVED` first, then run with
+             `enabled=True`. The historical records survive the filter
+             because they're no longer NULL.
+          2. Combinator: build the filter as
+             `reviewStatus IS APPROVED OR reviewStatus IS_EMPTY` inside
+             a viewFilterGroup so NULL rows pass. Twenty supports
+             filter groups via `viewFilterGroupId` on CreateViewFilterInput.
+        """
         obj = self._object_by_name(object_name)
         if not obj:
             raise RuntimeError(f"Twenty object {object_name!r} not found")
@@ -296,10 +316,18 @@ class TwentyProvisioner:
 
     # --- top-level entry point -----------------------------------------------
 
-    def provision_all(self) -> dict:
+    def provision_all(self, *, add_default_view_filter: bool = False) -> dict:
         """Run every Phase 1 step in the safe order: fields must exist
         before views can reference them; views must exist before their
-        filters."""
+        filters.
+
+        `add_default_view_filter=False` by default because Twenty's
+        `IS_NOT PENDING` operand is NULL-unsafe — see the docstring on
+        `ensure_pending_filter_on_default_view`. Only pass True after a
+        backfill step has set every existing record's reviewStatus to a
+        non-NULL value, or after we've reworked the filter to use a
+        NULL-safe combinator group.
+        """
         results: dict = {
             "review_status_fields": [],
             "weekly_plan": None,
@@ -311,7 +339,16 @@ class TwentyProvisioner:
         results["weekly_plan"] = self.ensure_weekly_plan_object()
         for object_name in REVIEW_STATUS_TARGET_OBJECTS:
             results["kanban_views"].append(self.ensure_kanban_view(object_name))
-            results["default_view_filters"].append(
-                self.ensure_pending_filter_on_default_view(object_name)
-            )
+            if add_default_view_filter:
+                results["default_view_filters"].append(
+                    self.ensure_pending_filter_on_default_view(object_name)
+                )
+            else:
+                results["default_view_filters"].append(
+                    {
+                        "object": object_name,
+                        "filter": REVIEW_STATUS_FIELD_NAME,
+                        "action": "skipped_nullsafe",
+                    }
+                )
         return results
