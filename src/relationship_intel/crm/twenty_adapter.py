@@ -360,9 +360,16 @@ class TwentyCRMAdapter(CRMAdapter):
             self._request("POST", f"/{objects}", json={id_field: record_id, **_target_link(ref)})
 
     def tag_record(self, ref: CRMRef, tags: list[str]) -> None:
-        # Twenty has no first-class tag object on core records; Phase 2 decision is
-        # whether to model tags as a custom multi-select field. No-op with a log line.
-        logger.info("twenty tag_record skipped (no native tags): %s", ",".join(sorted(tags)))
+        # Twenty has no first-class tag object on core records. Modelling tags
+        # as a custom multi-select field is a Phase 2 decision (see gh #14).
+        # Raise instead of silently swallowing so a future caller learns the
+        # method is unimplemented at write time, not by wondering why a tag
+        # never showed up in the CRM.
+        raise NotImplementedError(
+            f"TwentyCRMAdapter.tag_record is not implemented — Twenty has no "
+            f"native tags on {ref.object_type}. Track gh #14 for the custom-"
+            f"multi-select-field decision. Attempted tags: {sorted(tags)}"
+        )
 
     def get_pipeline_items(self, owner: str | None = None) -> list[PipelineItem]:
         payload = self._request("GET", "/opportunities", params={"limit": 60, "depth": 1})

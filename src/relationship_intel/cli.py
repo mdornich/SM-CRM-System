@@ -161,7 +161,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     review_ui = sub.add_parser(
         "review-ui",
-        help="start the local CRM review UI",
+        help=(
+            "start the local CRM review UI. For a machine-readable snapshot "
+            "of pending items use `review-queue --json` instead."
+        ),
         parents=[output_parent],
     )
     review_ui.add_argument("--host", default="127.0.0.1")
@@ -238,7 +241,19 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
-            _print_json(pipeline.run_report(settings, args.owner, week_start, args.vault))
+            report = pipeline.run_report(settings, args.owner, week_start, args.vault)
+            if args.json_output:
+                _print_json(report)
+            else:
+                metrics = report.get("metrics", {})
+                print(f"Contract-1 report ({report['agent']}, {report['report_date']})")
+                print(f"  {report['headline']}")
+                print(
+                    f"  confidence: {report['confidence']} · "
+                    f"tracked: {metrics.get('total_tracked_people', 0)} · "
+                    f"overdue: {metrics.get('overdue', 0)}"
+                )
+                print("  (use --json for the full report)")
 
         elif args.command == "query":
             limit = args.limit or (10 if args.kind == "who-to-call" else 20)
@@ -331,6 +346,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Review queue: {summary['count']} item(s) {summary['by_status']}")
 
         elif args.command == "review-ui":
+            if args.json_output:
+                _print_json({"url": f"http://{args.host}:{args.port}/", "starting": True})
             serve_review_ui(settings, args.host, args.port)
 
     except NotConfiguredError as exc:

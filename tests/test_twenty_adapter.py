@@ -347,3 +347,17 @@ def test_api_key_never_appears_in_logs(caplog):
         _adapter(handler).health_check()
     for record in caplog.records:
         assert KEY not in record.getMessage()
+
+
+def test_tag_record_raises_not_implemented_error():
+    """gh #14: tag_record used to silently no-op. Twenty has no native tags on
+    core records; raising surfaces the unimplemented method to any future
+    caller instead of quietly dropping the tag."""
+    ref = CRMRef("twenty", "person", "p-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {}})
+
+    adapter = _adapter(handler)
+    with pytest.raises(NotImplementedError, match="tag_record"):
+        adapter.tag_record(ref, ["prospect", "warm"])
