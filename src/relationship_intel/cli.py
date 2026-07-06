@@ -213,10 +213,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--backfill-approved",
         action="store_true",
         help=(
-            "after provisioning, flip every pre-existing Twenty record "
-            "with reviewStatus=PENDING to APPROVED. Use once, after adding "
-            "the reviewStatus field, so pre-Phase-1 records stop leaking "
-            "into the pending queue."
+            "DESTRUCTIVE, ONE-SHOT: after provisioning, flip every existing "
+            "Twenty record with reviewStatus=PENDING to APPROVED. Intended "
+            "to be run ONCE, after adding the reviewStatus field, so "
+            "pre-Phase-1 records stop leaking into the pending queue. "
+            "Prompts for interactive `YES` confirmation before running "
+            "so re-invocations don't silently promote real candidates."
+        ),
+    )
+    provision_twenty.add_argument(
+        "--refresh-plan",
+        action="store_true",
+        help=(
+            "overwrite the Home dashboard's weekly-plan widget with the "
+            "current stored plan. Off by default so re-runs of "
+            "provision-twenty (to reconfirm schema) don't blow away manual "
+            "edits an operator made to the widget inside Twenty's UI. Turn "
+            "on from the Monday weekly-plan job."
         ),
     )
     sub.add_parser(
@@ -445,25 +458,29 @@ def main(argv: list[str] | None = None) -> int:
             if not settings.twenty_api_key:
                 print("TWENTY_API_KEY is not set; see .env.example.", file=sys.stderr)
                 return 2
-            # Load the most-recent stored plan for the current week (or the
-            # last stored plan if this week's isn't ready yet) and render it
-            # to markdown so the dashboard's rich-text widget shows the
+            # Load the most-recent stored plan for the configured owner
+            # (the plans table is keyed on (owner, week_start), so
+            # unfiltered queries can return a colleague's plan) and render
+            # it to markdown so the dashboard's rich-text widget shows the
             # actual plan James is working from — not a placeholder.
             rich_text_body: str | None = None
             repo = pipeline.open_repo(settings)
             week_start_iso = monday_of_week(date.today()).isoformat()
-            plans = repo.plans_for_week(week_start_iso)
-            if not plans:
-                # Fall back to the most-recent plan on record so the widget
-                # is never empty just because Monday hasn't run yet.
-                fallback = repo.conn.execute(
+            plan_row = repo.conn.execute(
+                "SELECT owner, week_start, plan_json FROM plans "
+                "WHERE owner = ? AND week_start = ? LIMIT 1",
+                (settings.default_owner, week_start_iso),
+            ).fetchone()
+            if plan_row is None:
+                # Fall back to the most-recent plan on record for the same
+                # owner so the widget is never empty just because Monday
+                # hasn't run yet.
+                plan_row = repo.conn.execute(
                     "SELECT owner, week_start, plan_json FROM plans "
-                    "ORDER BY week_start DESC LIMIT 1"
+                    "WHERE owner = ? ORDER BY week_start DESC LIMIT 1",
+                    (settings.default_owner,),
                 ).fetchone()
-                if fallback:
-                    plans = [fallback]
-            if plans:
-                plan_row = plans[0]
+            if plan_row is not None:
                 try:
                     plan_dict = json.loads(plan_row["plan_json"])
                     rich_text_body = _weekly_plan.to_markdown(plan_dict)
@@ -472,16 +489,43 @@ def main(argv: list[str] | None = None) -> int:
                         f"Warning: could not render weekly plan for widget: {exc}",
                         file=sys.stderr,
                     )
+            # The dashboard iframe points at the local review UI daemon;
+            # if it isn't running James sees a blank iframe in Twenty with
+            # no in-Twenty triage fallback. Warn loudly at provision time.
+            from relationship_intel.crm.twenty_provisioner import probe_review_ui
+
+            probe_msg = probe_review_ui()
+            if probe_msg:
+                print(f"Warning: {probe_msg}", file=sys.stderr)
+
             provisioner = TwentyProvisioner(settings.twenty_api_url, settings.twenty_api_key)
-            report = provisioner.provision_all(rich_text_body=rich_text_body)
+            report = provisioner.provision_all(
+                rich_text_body=rich_text_body,
+                refresh_rich_text=args.refresh_plan,
+            )
             cleanup_report = None
             if args.cleanup:
                 cleanup_report = provisioner.cleanup_phase1_artifacts()
                 report["cleanup"] = cleanup_report
             backfill_report = None
             if args.backfill_approved:
-                backfill_report = provisioner.backfill_pending_to_approved()
-                report["backfill"] = backfill_report
+                # Destructive one-shot — insist on interactive `YES` so a
+                # re-invocation doesn't silently promote real candidates.
+                # Skip the prompt when writing JSON output (piped/scripted).
+                if not args.json_output:
+                    prompt = (
+                        "\n--backfill-approved is destructive and NOT idempotent.\n"
+                        "It flips every Twenty record with reviewStatus=PENDING to\n"
+                        "APPROVED — including genuine unreviewed candidates if you\n"
+                        "run this after Phase 1.5 is live.\n"
+                        "\nType YES to confirm, anything else to skip: "
+                    )
+                    if input(prompt).strip() != "YES":
+                        print("Backfill skipped.", file=sys.stderr)
+                        args.backfill_approved = False
+                if args.backfill_approved:
+                    backfill_report = provisioner.backfill_pending_to_approved()
+                    report["backfill"] = backfill_report
             if args.json_output:
                 _print_json(report)
             else:
@@ -517,8 +561,12 @@ def main(argv: list[str] | None = None) -> int:
                             f"  {entry['object']}: {entry['patched']} patched, "
                             f"{entry['skipped']} skipped"
                         )
-                        if entry["errors"]:
-                            line += f", errors: {len(entry['errors'])}"
+                        if entry.get("errors"):
+                            line += f", patch errors: {len(entry['errors'])}"
+                        if entry.get("fetch_error"):
+                            line += f", fetch error: {entry['fetch_error']}"
+                        if entry.get("truncated"):
+                            line += " [TRUNCATED at page 1 — cursor pagination unsupported]"
                         print(line)
 
         elif args.command == "review-queue":

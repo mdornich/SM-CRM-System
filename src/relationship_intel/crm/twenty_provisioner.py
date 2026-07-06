@@ -66,6 +66,25 @@ RICH_TEXT_WIDGET_TITLE = "Weekly plan"
 DEFAULT_REVIEW_UI_URL = "http://127.0.0.1:8765"
 
 
+def probe_review_ui(url: str = DEFAULT_REVIEW_UI_URL) -> str | None:
+    """Return None if the local review UI is reachable, otherwise a
+    single-line human-readable warning explaining why the dashboard's
+    Pending review iframe will be broken."""
+    try:
+        response = httpx.get(url + "/", timeout=1.5, follow_redirects=False)
+    except httpx.HTTPError:
+        return (
+            f"local review UI at {url} is not reachable — the dashboard's "
+            "Pending review tab will be broken until `smcrm review-ui` is running."
+        )
+    if response.status_code >= 400:
+        return (
+            f"review UI at {url} returned HTTP {response.status_code} — the "
+            "dashboard's Pending review tab will be broken until the daemon is healthy."
+        )
+    return None
+
+
 # --- Field spec ---------------------------------------------------------------
 
 _REVIEW_STATUS_OPTIONS = [
@@ -269,158 +288,13 @@ class TwentyProvisioner:
         self._request("POST", "/metadata/fields", json=body)
         return {"object": object_name, "field": REVIEW_STATUS_FIELD_NAME, "action": "created"}
 
-    def ensure_pending_person_view(self) -> dict:
-        """Ensure a TABLE view "Pending review" exists on Person, with an
-        `IS PENDING` viewFilter on `reviewStatus`. Returns view id + action.
-
-        `IS PENDING` is intentionally NULL-unsafe here — the intent is
-        exactly "pending records only", so records with reviewStatus = NULL
-        (legacy rows never touched by the pipeline) SHOULD be hidden."""
-        person = self._object_by_name("person")
-        if not person:
-            raise RuntimeError("Twenty object 'person' not found")
-        fields_by_name = {f.get("name"): f for f in person.get("fields", [])}
-        review_field = fields_by_name.get(REVIEW_STATUS_FIELD_NAME)
-        if not review_field:
-            raise RuntimeError(
-                "reviewStatus field is missing on person; run ensure_review_status_field first."
-            )
-
-        # RECORD_TABLE dashboard widgets require the backing view to be
-        # ViewType.TABLE_WIDGET, NOT plain TABLE. A regular TABLE view will
-        # render as "Invalid Configuration" inside the widget (see
-        # RecordTableWidgetViewDraftInitEffect + useViewById on the front).
-        # If a prior run created it as TABLE, delete it so we can rebuild.
-        existing_view: dict | None = None
-        for view in self._views_for_object(person["id"]):
-            if view.get("name") != PENDING_PERSON_VIEW_NAME:
-                continue
-            if view.get("type") == "TABLE_WIDGET":
-                existing_view = view
-                break
-            # Wrong-typed leftover — DELETE and let the create path rebuild.
-            self._request_tolerant("DELETE", f"/metadata/views/{view['id']}")
-
-        if existing_view is None:
-            body = {
-                "name": PENDING_PERSON_VIEW_NAME,
-                "objectMetadataId": person["id"],
-                "type": "TABLE_WIDGET",
-                # CreateViewInput requires an icon — any Tabler name works.
-                "icon": "IconClipboardCheck",
-            }
-            created = self._request("POST", "/metadata/views", json=body)
-            view_id = _extract_id(created) or _refetch_view_id(
-                self, person["id"], PENDING_PERSON_VIEW_NAME
-            )
-            view_action = "created"
-        else:
-            view_id = existing_view["id"]
-            view_action = "existing"
-
-        # Ensure the IS PENDING filter is on the view.
-        filter_action = "existing"
-        already_filtered = any(
-            f.get("fieldMetadataId") == review_field["id"] for f in self._filters_for_view(view_id)
-        )
-        if not already_filtered:
-            self._request(
-                "POST",
-                "/metadata/viewFilters",
-                json={
-                    "viewId": view_id,
-                    "fieldMetadataId": review_field["id"],
-                    "operand": "IS",
-                    # SELECT viewFilters store `value` as a JSON-encoded
-                    # ARRAY of option strings (see
-                    # turnRecordFilterIntoGqlOperationFilter.ts's SELECT
-                    # branch — it calls
-                    # arrayOfStringsOrVariablesSchema.parse on the value).
-                    # A raw "PENDING" string trips JSON.parse and the
-                    # RECORD_TABLE widget renders "Invalid Configuration".
-                    "value": json.dumps([REVIEW_STATUS_VALUES["pending"]]),
-                },
-            )
-            filter_action = "created"
-
-        return {
-            "object": "person",
-            "view": PENDING_PERSON_VIEW_NAME,
-            "view_id": view_id,
-            "view_action": view_action,
-            "filter_action": filter_action,
-        }
-
-    def ensure_visible_view_fields(self, view_id: str) -> dict:
-        """Twenty auto-creates a viewField row per column on TABLE views,
-        but fields added AFTER the object was seeded (like our reviewStatus)
-        land with `isVisible: false`. PATCH any hidden ones to true so the
-        column actually appears."""
-        patched: list[str] = []
-        for vf in self._view_fields_for_view(view_id):
-            if not vf.get("isVisible", True):
-                self._request(
-                    "PATCH",
-                    f"/metadata/viewFields/{vf['id']}",
-                    json={"isVisible": True},
-                )
-                patched.append(vf["id"])
-        return {"view_id": view_id, "patched_view_field_ids": patched}
-
-    # Column order in the pending-review Person view. Names must match
-    # field.name on Person (see the Twenty person entity). We keep it short
-    # so the widget fits half a dashboard tab without horizontal scroll.
-    PENDING_REVIEW_COLUMNS = ("name", "company", "jobTitle", "emails", REVIEW_STATUS_FIELD_NAME)
-
-    def ensure_pending_review_view_columns(self, view_id: str, person: dict) -> dict:
-        """Create viewField rows on the pending-review view for name,
-        company, jobTitle, emails, reviewStatus (in that order).
-
-        Twenty does NOT auto-create viewFields for custom TABLE views —
-        without this the widget renders as an empty box even when the
-        underlying filter matches rows."""
-        fields_by_name = {f.get("name"): f for f in person.get("fields", [])}
-        existing_by_field = {
-            vf.get("fieldMetadataId"): vf for vf in self._view_fields_for_view(view_id)
-        }
-        actions: list[dict] = []
-        for position, name in enumerate(self.PENDING_REVIEW_COLUMNS):
-            field = fields_by_name.get(name)
-            if not field:
-                actions.append({"field": name, "action": "not_found_on_person"})
-                continue
-            existing = existing_by_field.get(field["id"])
-            if existing is not None:
-                if not existing.get("isVisible", True):
-                    self._request(
-                        "PATCH",
-                        f"/metadata/viewFields/{existing['id']}",
-                        json={"isVisible": True, "position": position},
-                    )
-                    actions.append({"field": name, "action": "unhidden"})
-                else:
-                    actions.append({"field": name, "action": "existing"})
-                continue
-            self._request(
-                "POST",
-                "/metadata/viewFields",
-                json={
-                    "viewId": view_id,
-                    "fieldMetadataId": field["id"],
-                    "isVisible": True,
-                    "position": position,
-                    "size": 180,
-                },
-            )
-            actions.append({"field": name, "action": "created"})
-        return {"view_id": view_id, "columns": actions}
-
     def ensure_home_dashboard(
         self,
         name: str = HOME_DASHBOARD_NAME,
         *,
         rich_text_body: str | None = None,
         review_ui_url: str = DEFAULT_REVIEW_UI_URL,
+        refresh_rich_text: bool = False,
     ) -> dict:
         """Ensure the single-dashboard shape exists:
 
@@ -476,12 +350,13 @@ class TwentyProvisioner:
             self._list_page_layout_tabs(layout_id),
             key=lambda t: t.get("position", 0),
         )
+        # Only migrate the exact legacy shape (single tab at position 0
+        # titled with the dashboard name — old code created "Home" here).
+        # Matching on widget count alone would wipe admin-added widgets on
+        # unrelated tabs the operator built by hand.
         for old_tab in existing_tabs:
-            widgets_here = self._list_page_layout_widgets(old_tab["id"])
-            if len(widgets_here) >= 2 or (
-                old_tab.get("title") == name and old_tab.get("position") == 0
-            ):
-                for w in widgets_here:
+            if old_tab.get("title") == name and old_tab.get("position") == 0:
+                for w in self._list_page_layout_widgets(old_tab["id"]):
                     self._request_tolerant("DELETE", f"/metadata/pageLayoutWidgets/{w['id']}")
 
         # -- Clean up the now-unused Pending review TABLE_WIDGET view -----
@@ -501,8 +376,12 @@ class TwentyProvisioner:
             layout_id, title=RICH_TEXT_WIDGET_TITLE, position=1
         )
         body_markdown = rich_text_body if rich_text_body is not None else DEFAULT_RICH_TEXT_BODY
+        # Only overwrite an existing widget body when the caller explicitly
+        # asked for a refresh — otherwise re-running provision-twenty
+        # (e.g. to reconfirm schema) would silently blow away any manual
+        # edits the operator made to the plan widget in Twenty's UI.
         rich_action = self._ensure_rich_text_widget(
-            plan_tab_id, person, body_markdown, force_update=rich_text_body is not None
+            plan_tab_id, person, body_markdown, force_update=refresh_rich_text
         )
 
         tab_id = pending_tab_id  # keep for return-value continuity
@@ -732,9 +611,16 @@ class TwentyProvisioner:
         "opportunity": "opportunities",
     }
 
+    # Twenty caps `limit` at 60 on record endpoints. Enough for a POC
+    # workspace; a genuine multi-page traversal would need Twenty's
+    # base64-encoded cursor (encodeCursor in cursors.util.ts), which the
+    # `starting_after=<id>` shape below does NOT satisfy — so we cap at
+    # a single page and log a warning if the workspace is bigger.
+    _BACKFILL_MAX_PER_OBJECT = 60
+
     def backfill_pending_to_approved(self) -> dict:
-        """Flip every existing People/Companies/Opportunities record whose
-        `reviewStatus` is PENDING to APPROVED.
+        """DESTRUCTIVE, ONE-SHOT: flip every existing People / Companies /
+        Opportunities record whose `reviewStatus` is PENDING to APPROVED.
 
         Rationale: when Phase 1 added the SELECT field it declared
         `defaultValue: 'PENDING'`, so every record that existed BEFORE
@@ -743,33 +629,38 @@ class TwentyProvisioner:
         stale pre-Phase-1 syncs — and they need to move out of PENDING
         so the queue only reflects actual review work.
 
-        Uses the RESTful workspace endpoints (`/people`, `/companies`,
-        `/opportunities`) — NOT the metadata REST — since we're mutating
-        record data, not schema."""
+        NOT idempotent for its stated purpose: if run AFTER Phase 1.5 is
+        live and real PENDING candidates exist, it will silently promote
+        them without human review. Callers must gate this behind explicit
+        operator confirmation (see the CLI's `--backfill-approved` path).
+        """
         report: dict = {"objects": []}
         pending_value = REVIEW_STATUS_VALUES["pending"]
         approved_value = REVIEW_STATUS_VALUES["approved"]
         for object_name in REVIEW_STATUS_TARGET_OBJECTS:
             plural = self._BACKFILL_PLURALS[object_name]
-            patched = 0
-            skipped = 0
-            errors: list[str] = []
-            # Paginate through workspace records. Twenty's REST records
-            # endpoint envelope is {data: {<plural>: [...]}}.
-            cursor: str | None = None
-            while True:
-                params: dict = {"limit": 60}
-                if cursor:
-                    params["starting_after"] = cursor
-                payload = self._request("GET", f"/{plural}", params=params)
+            entry: dict = {
+                "object": object_name,
+                "patched": 0,
+                "skipped": 0,
+                "errors": [],
+                "truncated": False,
+                "fetch_error": None,
+            }
+            try:
+                payload = self._request(
+                    "GET",
+                    f"/{plural}",
+                    params={"limit": self._BACKFILL_MAX_PER_OBJECT},
+                )
                 data = payload.get("data", {})
                 items = data.get(plural, []) if isinstance(data, dict) else []
-                if not items:
-                    break
+                if len(items) >= self._BACKFILL_MAX_PER_OBJECT:
+                    entry["truncated"] = True
                 for record in items:
                     status = record.get(REVIEW_STATUS_FIELD_NAME)
                     if status != pending_value:
-                        skipped += 1
+                        entry["skipped"] += 1
                         continue
                     try:
                         self._request(
@@ -777,20 +668,23 @@ class TwentyProvisioner:
                             f"/{plural}/{record['id']}",
                             json={REVIEW_STATUS_FIELD_NAME: approved_value},
                         )
-                        patched += 1
+                        entry["patched"] += 1
                     except httpx.HTTPStatusError as exc:
-                        errors.append(f"{record.get('id')}: {exc.response.status_code}")
-                if len(items) < 60:
-                    break
-                cursor = items[-1].get("id")
-                if not cursor:
-                    break
+                        entry["errors"].append(f"{record.get('id')}: {exc.response.status_code}")
+            except httpx.HTTPStatusError as exc:
+                # Preserve the partial report — one object's fetch failing
+                # must not swallow prior objects' work.
+                entry["fetch_error"] = f"HTTP {exc.response.status_code}"
+            except httpx.HTTPError as exc:
+                entry["fetch_error"] = type(exc).__name__
             report["objects"].append(
                 {
                     "object": object_name,
-                    "patched": patched,
-                    "skipped": skipped,
-                    "errors": errors,
+                    "patched": entry["patched"],
+                    "skipped": entry["skipped"],
+                    "errors": entry["errors"],
+                    "truncated": entry["truncated"],
+                    "fetch_error": entry["fetch_error"],
                 }
             )
         return report
@@ -802,6 +696,7 @@ class TwentyProvisioner:
         *,
         add_default_view_filter: bool = False,
         rich_text_body: str | None = None,
+        refresh_rich_text: bool = False,
     ) -> dict:
         """Run every Phase 1.5 step in the safe order: fields must exist
         before views can reference them; views must exist before their
@@ -820,7 +715,10 @@ class TwentyProvisioner:
         }
         for object_name in REVIEW_STATUS_TARGET_OBJECTS:
             results["review_status_fields"].append(self.ensure_review_status_field(object_name))
-        results["home_dashboard"] = self.ensure_home_dashboard(rich_text_body=rich_text_body)
+        results["home_dashboard"] = self.ensure_home_dashboard(
+            rich_text_body=rich_text_body,
+            refresh_rich_text=refresh_rich_text,
+        )
         for object_name in REVIEW_STATUS_TARGET_OBJECTS:
             if add_default_view_filter:
                 results["default_view_filters"].append(

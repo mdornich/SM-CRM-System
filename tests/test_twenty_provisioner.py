@@ -152,8 +152,9 @@ class _State:
         view = {"id": self._id(), **spec}
         self.views.setdefault(spec["objectMetadataId"], []).append(view)
         # Fields added AFTER the object was seeded land with isVisible=false
-        # on any freshly-created TABLE view — that's exactly the gotcha
-        # ensure_visible_view_fields exists to fix.
+        # on any freshly-created TABLE view — historical gotcha that
+        # RECORD_TABLE-widget-era code had to fix; retained here so tests
+        # of any surviving TABLE view still model the real behavior.
         if spec.get("type") in ("TABLE", "TABLE_WIDGET"):
             obj = next((o for o in self.objects if o["id"] == spec["objectMetadataId"]), None)
             if obj:
@@ -284,6 +285,14 @@ class _State:
                 )
             if method == "GET" and path == "/rest/dashboards":
                 return httpx.Response(200, json=self.dashboards)
+            # Empty workspace-record stubs — backfill iterates them.
+            if method == "GET" and path in (
+                "/rest/people",
+                "/rest/companies",
+                "/rest/opportunities",
+            ):
+                plural = path.rsplit("/", 1)[-1]
+                return httpx.Response(200, json={"data": {plural: []}})
 
             # -- metadata writes -----------------------------------------
             if method == "POST" and path == "/rest/metadata/fields":
@@ -512,6 +521,92 @@ def test_provision_all_is_idempotent():
         assert hd[piece]["action"] == "existing", piece
     assert hd["navigation_menu_item"]["action"] == "skipped_not_supported"
     assert all(v["action"] == "skipped_nullsafe" for v in second["default_view_filters"])
+
+
+def test_provision_all_without_refresh_rich_text_leaves_widget_alone():
+    """re-running with a plan body but refresh_rich_text=False (the CLI
+    default) must NOT PATCH the widget — protects operator edits inside
+    Twenty's UI from being blown away by a schema-reconfirm run."""
+    state = _State()
+    prov = _provisioner(state.handler())
+    prov.provision_all(rich_text_body="# initial plan")
+
+    state.request_log.clear()
+    prov.provision_all(rich_text_body="# NEW plan body")
+    patches_on_widget = [
+        (m, p)
+        for m, p in state.request_log
+        if m == "PATCH" and p.startswith("/rest/metadata/pageLayoutWidgets/")
+    ]
+    assert patches_on_widget == []
+
+
+def test_provision_all_with_refresh_rich_text_patches_widget():
+    """Opt-in refresh actually writes."""
+    state = _State()
+    prov = _provisioner(state.handler())
+    prov.provision_all(rich_text_body="# initial plan")
+
+    state.request_log.clear()
+    prov.provision_all(rich_text_body="# refreshed plan", refresh_rich_text=True)
+    patches_on_widget = [
+        (m, p)
+        for m, p in state.request_log
+        if m == "PATCH" and p.startswith("/rest/metadata/pageLayoutWidgets/")
+    ]
+    assert len(patches_on_widget) == 1
+
+
+def test_backfill_captures_partial_report_on_fetch_error():
+    """When the GET on one object type fails, prior objects' patch counts
+    survive and later objects are still attempted."""
+    state = _State()
+    # Sabotage person GET to raise on the workspace endpoint.
+    original_handler = state.handler()
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/rest/people":
+            return httpx.Response(500, json={"error": "boom"})
+        return original_handler(request)
+
+    prov = _provisioner(failing)
+    for obj in REVIEW_STATUS_TARGET_OBJECTS:
+        prov.ensure_review_status_field(obj)
+    report = prov.backfill_pending_to_approved()
+    by_object = {r["object"]: r for r in report["objects"]}
+    assert by_object["person"]["fetch_error"] == "HTTP 500"
+    # Companies + Opportunities still attempted (0 records but no error).
+    assert by_object["company"]["fetch_error"] is None
+    assert by_object["opportunity"]["fetch_error"] is None
+
+
+def test_migration_leaves_admin_added_tab_widgets_intact():
+    """The single-tab migration path may only wipe tabs that match the
+    exact legacy shape (title=name at position 0) — NOT any tab with 2+
+    widgets, which would delete admin-added ones."""
+    state = _State()
+    prov = _provisioner(state.handler())
+    for obj in REVIEW_STATUS_TARGET_OBJECTS:
+        prov.ensure_review_status_field(obj)
+    prov.ensure_home_dashboard()
+
+    # Simulate an admin adding a second widget to the Pending review tab.
+    tabs = sorted(state.page_layout_tabs, key=lambda t: t["position"])
+    pending_tab_id = tabs[0]["id"]
+    state.add_page_layout_widget(
+        {
+            "pageLayoutTabId": pending_tab_id,
+            "title": "Admin note",
+            "type": "STANDALONE_RICH_TEXT",
+            "configuration": {"configurationType": "STANDALONE_RICH_TEXT", "body": {}},
+        }
+    )
+    state.request_log.clear()
+
+    # Re-run provision — the admin widget must survive.
+    prov.ensure_home_dashboard()
+    surviving = [w for w in state.page_layout_widgets if w["title"] == "Admin note"]
+    assert len(surviving) == 1
 
 
 def test_home_dashboard_is_idempotent():
