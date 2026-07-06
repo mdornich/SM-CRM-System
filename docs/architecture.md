@@ -7,10 +7,15 @@
 
 **v2 changelog (2026-07-06):** review-first Twenty sync is live (§3.9);
 CodexExecClient added as a third LLM provider (§3.2, §6); managed-marker
-granularity relaxed to block-level (§3.5); Contract-1 metrics emit both
-stage-shaped and group-shaped counts (§3.7); `review_status` symmetric
-across all intelligence artifacts (§3.5); daily scheduler via launchd
-(§4). See gh issues #3–#14 for the underlying commits.
+granularity relaxed to block-level (§3.5, gh #8); Contract-1 metrics emit
+both stage-shaped and group-shaped counts (§3.7, gh #12); `review_status`
+symmetric across all intelligence artifacts (§3.5, gh #11); daily
+scheduler via launchd (§4, gh #5); Twenty stage filter for unmappable
+stages (§3.9, gh #3); default review-gate flipped on (§6, gh #4);
+push-on-approve wiring in the review UI (§3.9, gh #6); Obsidian
+template drift closed against docs/build-prompt.md (gh #10); Twenty
+`tag_record` now raises NotImplementedError, CLI `report --json` split
+from human summary (gh #14).
 
 ---
 
@@ -228,8 +233,8 @@ note templates read the DB value (gh #11 — v1 shipped the column on `people`
 only; migrations add it to companies/opportunities/lead_profiles on next
 connect). Unreviewed artifacts may inform recommendations but are always
 labeled as AI synthesis, never treated as canonical fact. Corrections
-preserve what changed and why (the managed-section + backup mechanism above
-keeps the original visible in `.ri-backups/`). Only `reviewed`/`corrected`/
+preserve what changed and why (the Idempotent-write mechanism below keeps
+originals visible in `.ri-backups/`). Only `reviewed`/`corrected`/
 `confirmed` content is a candidate for promotion into canonical memory
 (Vault A L1/L2) in Phase 4 — unreviewed synthesis never promotes
 automatically. `Repository.set_review_status(table, id, status)` gives future
@@ -248,8 +253,21 @@ UI/CLI a validated write path.
 - On rewrite: text outside the marker is preserved verbatim; the block is
   replaced only when its content hash changed; a `.bak` copy is written to
   `<vault>/.ri-backups/<path>/<timestamp>.md` before any file that contains
-  out-of-marker edits is touched (capped at 10 backups per file).
+  out-of-marker edits is touched.
 - Re-running on unchanged input is a byte-for-byte no-op (asserted in tests).
+
+**Accepted trade-offs of block-level markers + capped backups:**
+
+1. *Hand-edits INSIDE the managed block get overwritten on the next rewrite.*
+   The intended workflow is: hand-edit OUTSIDE the markers; treat the managed
+   block as AI-owned. If you edit inside anyway, the change lands in
+   `.ri-backups/` and the operator has to reconcile.
+2. *`.ri-backups/` is capped at 10 backups per file* (a bounded-storage
+   choice). This is NOT the ORD-0003 audit trail of record — git history of
+   the vault is. If the vault is under version control (recommended for
+   James's real deployment), the audit trail is unbounded via `git log`;
+   `.ri-backups/` is only a short-term recovery window for accidental
+   overwrites between commits.
 
 ### 3.6 CRM Adapter Layer (`src/relationship_intel/crm/`)
 
@@ -353,7 +371,7 @@ Implementations:
    v2 (gh #12) emits BOTH `pipeline_counts_by_stage` (spec-shaped, deduped
    by person via `weekly_plan.build_plan`) AND `pipeline_counts_by_group`
    (richer for humans reading the report locally). Top-level `overdue` is
-   the same integer as `groups.overdue.length`. The fleet validator
+   the same integer as `len(groups["overdue"])`. The fleet validator
    ignores extras, so the union shape stays fleet-compatible.
 
    This passes `validate_agent_report_v1` verbatim **and** slots into the
@@ -588,15 +606,20 @@ that command set goes in this repo's `CLAUDE.md`).
    reviewable L1 promotion proposals; remaining work is the future human/Dex
    workflow that applies or rejects a proposal. Ties into a Cairns L1
    `succession-pipeline.md` writer (gh #9), deferred to Phase 4.
-3. **Multi-tenant review layer** — v2's review UI (§3.9) is deliberately
-   single-operator (documented concurrency + atomicity limitations in
-   `review.py`). Cloud deployment will need multi-user handling and a real
-   DB transaction around approve+sync.
-4. **Anthropic API model id + Claude Code CLI provider** — gh #2 and gh #7
+3. **Approval-layer shape** — ORD-0003 authority tiers (analyst /
+   principal / etc.) vs. the flat approve/reject queue shipped in v2
+   (§3.9). v2 chose the flat model to unblock local usage; if cloud
+   deployment introduces multi-role review, the `crm_review_items`
+   schema will need a role/authority column and a matching gate in
+   `sync_to_crm`. Deferred pending real-world review patterns.
+4. **Multi-tenant review layer** — see the concurrency + atomicity
+   caveats already documented in §3.9. Cloud deployment work should
+   address both here and in the schema (question 3).
+5. **Anthropic API model id + Claude Code CLI provider** — gh #2 and gh #7
    remain open. `AnthropicClient.MODEL` needs a valid current model id
    before Phase 1 can use the paid path; a `ClaudeCodeExecClient` mirror
    of `CodexExecClient` would let developers drive extraction through a
    Claude Max subscription.
-5. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +
+6. **Thane's role** — currently unspecified vs. Dex. The Contract-1 +
    delegate_task surface serves any orchestrator; no coupling to Dex
    specifically.
