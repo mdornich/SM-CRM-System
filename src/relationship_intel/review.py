@@ -184,6 +184,9 @@ def _home_url(
     return f"/{tail}{fragment}"
 
 
+_SYSTEM_PAYLOAD_KEYS = frozenset({"existing_crm_ref"})
+
+
 def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
     object_type = _one(form, "object_type")
     local_id = int(_one(form, "local_id"))
@@ -192,6 +195,15 @@ def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
         raise ValueError(f"Unsupported status: {status}")
     payload = _payload_from_form(form)
     repo = open_repo(settings)
+    # Preserve non-user-editable keys (like the gh #15 `existing_crm_ref`
+    # dict). If we let those round-trip through the form they get flattened
+    # to strings and later renders crash — see the AttributeError this
+    # commit is fixing.
+    prior = repo.review_item(object_type, local_id)
+    if prior:
+        for key in _SYSTEM_PAYLOAD_KEYS:
+            if key in prior.payload:
+                payload[key] = prior.payload[key]
     repo.set_review_item(object_type, local_id, status, payload)
 
 
@@ -487,7 +499,10 @@ def _render_existing_badge(*items) -> str:
         if not item:
             continue
         ref = item.payload.get("existing_crm_ref") if isinstance(item.payload, dict) else None
-        if not ref:
+        # Defensive: a prior version of _handle_item let existing_crm_ref
+        # round-trip through the form and come back as a string, which
+        # crashed rendering. Ignore anything that's not the dict shape.
+        if not isinstance(ref, dict):
             continue
         label = CRM_OBJECT_LABELS.get(item.object_type, item.object_type)
         name = ref.get("name") or "unknown"
@@ -591,6 +606,11 @@ def _render_review_item(
 def _render_payload_fields(payload: dict, compact: bool = False) -> str:
     rows = []
     for key in _ordered_keys(payload):
+        # System keys (dict-shaped enrichment stashed by the pipeline) must
+        # never be rendered as editable text — they'd round-trip through
+        # the form as strings and crash later renders.
+        if key in _SYSTEM_PAYLOAD_KEYS:
+            continue
         value = payload[key]
         label = FIELD_LABELS.get(key, _human_label(key))
         value_type = _value_type(value)

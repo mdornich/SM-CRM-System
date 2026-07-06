@@ -376,11 +376,14 @@ def _apply_existing_crm_ref(
     if adapter is None:
         return
     prior = repo.review_item(object_type, local_id)
-    if prior and prior.payload.get("existing_crm_ref") is not None:
+    cached = prior.payload.get("existing_crm_ref") if prior else None
+    if isinstance(cached, dict):
         # Cache hit — copy into current payload so a new-row insert still
         # writes the enrichment as part of its initial payload.
-        payload["existing_crm_ref"] = prior.payload["existing_crm_ref"]
+        payload["existing_crm_ref"] = cached
         return
+    # Anything else (None, missing, or a corrupted string from an older
+    # form round-trip) is treated as a cache miss and we do a fresh lookup.
     existing = lookup_fn(adapter, payload)
     if not existing:
         return
