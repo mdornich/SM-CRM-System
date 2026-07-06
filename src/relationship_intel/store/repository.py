@@ -475,40 +475,58 @@ class Repository:
     def plan_feedback_summary(self, weeks: int | None = None) -> dict:
         """Rollup of the last N weeks (or all-time when None). Surfaces the
         signal to tune with — e.g. 'cold_retouch is acted_on 0/12 → drop its
-        weight'; 'top_plays hit rate 8/12'."""
-        query = (
-            "SELECT group_name, action, count(*) AS n"
-            " FROM plan_feedback"
-            " {where} GROUP BY group_name, action ORDER BY group_name, action"
-        )
-        where = ""
+        weight'; 'top_plays hit rate 8/12'.
+
+        Rows with a NULL group_name (recorded before enrichment could
+        resolve context) are grouped under the sentinel `"(no context)"`
+        key so they never collide with a real literal group value that
+        happens to be `"unknown"`.
+        """
+        where_clause = ""
         params: tuple = ()
         if weeks is not None:
             recent = self.conn.execute(
                 "SELECT DISTINCT week_start FROM plan_feedback ORDER BY week_start DESC LIMIT ?",
-                (weeks,),
+                (max(weeks, 0),),
             ).fetchall()
             if not recent:
                 return {"weeks_covered": 0, "by_group": {}, "totals": {}}
             week_list = [row["week_start"] for row in recent]
             placeholders = ",".join(["?"] * len(week_list))
-            where = f"WHERE week_start IN ({placeholders})"
+            where_clause = f"WHERE week_start IN ({placeholders})"
             params = tuple(week_list)
+
+        # Single-scan aggregate: yields both the rollup and weeks_covered.
+        rollup_query = (
+            "SELECT week_start, group_name, action, count(*) AS n"
+            f" FROM plan_feedback {where_clause}"
+            " GROUP BY week_start, group_name, action"
+            " ORDER BY group_name, action"
+        )
         by_group: dict[str, dict[str, int]] = {}
         totals: dict[str, int] = {}
-        for row in self.conn.execute(query.format(where=where), params).fetchall():
-            group = row["group_name"] or "unknown"
+        weeks_seen: set[str] = set()
+        for row in self.conn.execute(rollup_query, params).fetchall():
+            weeks_seen.add(row["week_start"])
+            group = row["group_name"] if row["group_name"] is not None else "(no context)"
             action = row["action"]
-            by_group.setdefault(group, {})[action] = row["n"]
-            totals[action] = totals.get(action, 0) + row["n"]
-        weeks_covered = self.conn.execute(
-            "SELECT COUNT(DISTINCT week_start) AS n FROM plan_feedback"
-            + (f" WHERE week_start IN ({','.join(['?'] * len(params))})" if params else ""),
-            params,
-        ).fetchone()["n"]
-        return {"weeks_covered": weeks_covered, "by_group": by_group, "totals": totals}
+            n = row["n"]
+            actions = by_group.setdefault(group, {})
+            actions[action] = actions.get(action, 0) + n
+            totals[action] = totals.get(action, 0) + n
+        return {"weeks_covered": len(weeks_seen), "by_group": by_group, "totals": totals}
 
     # -- plans -----------------------------------------------------------------
+
+    def plans_for_week(self, week_start: str) -> list[sqlite3.Row]:
+        """Every stored plan for a given week (one per owner). Used by the
+        plan-feedback CLI to enrich a recorded item with (person_name,
+        group_name) without walking the filesystem or knowing about slug
+        conventions."""
+        return self.conn.execute(
+            "SELECT owner, week_start, plan_json FROM plans WHERE week_start = ?",
+            (week_start,),
+        ).fetchall()
 
     def save_plan(self, owner: str, week_start: str, plan_json: str) -> None:
         self.conn.execute(

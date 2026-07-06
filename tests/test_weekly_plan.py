@@ -216,6 +216,56 @@ def test_plan_feedback_record_and_summary(settings, samples_dir):
     assert summary["by_group"]["warm"] == {"acted": 1, "deferred": 1}
 
 
+def test_plan_feedback_cli_enrichment_works_for_non_default_owner(settings, samples_dir):
+    """gh #16 review-pass finding: enrichment used to reconstruct the plan
+    filename from `default_owner.lower()` which diverged from the writer's
+    `slugify(owner)` convention — silently dropping group_name for any
+    multi-word or non-default owner. Fix reads the `plans` table directly."""
+    from dataclasses import replace
+
+    from relationship_intel import cli as cli_mod
+
+    fancy = replace(settings, default_owner="Alex Nguyen")
+    pipeline.run_ingest(fancy, samples_dir)
+    plan = pipeline.run_weekly_plan(fancy, run_date=date(2026, 7, 4))
+    (target,) = plan["groups"]["warm"][:1]
+
+    repo = pipeline.open_repo(fancy)
+    person_name, group_name = cli_mod._lookup_plan_item_context(
+        repo, plan["week_start"], target["id"]
+    )
+    assert person_name == target["person_name"]
+    # The item may live in hot AND warm; the lookup skips the derived
+    # top_plays / needs_review groups, so the returned group is one of the
+    # substantive pipeline groups the item actually belongs to.
+    assert group_name in {"hot", "warm", "overdue", "cold_retouch", "stalled"}
+    assert group_name not in {"top_plays", "needs_review"}
+
+
+def test_plan_feedback_summary_null_vs_unknown_group_do_not_collide(settings):
+    """gh #16 review-pass finding: NULL group_name and a literal 'unknown'
+    group_name used to fold to the same key and silently overwrite each
+    other. Fix: NULL rows use a distinct '(no context)' sentinel."""
+    repo = pipeline.open_repo(settings)
+    repo.record_plan_feedback("2026-07-06", "id-A", "acted", group_name=None)
+    repo.record_plan_feedback("2026-07-06", "id-B", "acted", group_name="unknown")
+
+    summary = repo.plan_feedback_summary()
+    assert summary["by_group"]["(no context)"] == {"acted": 1}
+    assert summary["by_group"]["unknown"] == {"acted": 1}
+    assert summary["totals"]["acted"] == 2
+
+
+def test_plan_feedback_summary_weeks_zero_reports_zero(settings):
+    """gh #16 review-pass finding: `--weeks 0` used to be silently
+    indistinguishable from empty history. Fix ensures zero returns the
+    'no history in that window' shape correctly."""
+    repo = pipeline.open_repo(settings)
+    repo.record_plan_feedback("2026-07-06", "id-A", "acted")
+    summary = repo.plan_feedback_summary(weeks=0)
+    assert summary == {"weeks_covered": 0, "by_group": {}, "totals": {}}
+
+
 def test_plan_feedback_rejects_unknown_action(settings):
     """gh #16: only the enum of {acted, deferred, rejected, ignored} is
     accepted — guards against silent typos in a future UI or CLI."""

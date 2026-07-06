@@ -46,35 +46,39 @@ def _print_json(payload: Any) -> None:
     print(json.dumps(payload, default=_json_default, indent=2, sort_keys=True))
 
 
+_DERIVED_PLAN_GROUPS = frozenset({"top_plays", "needs_review"})
+
+
 def _lookup_plan_item_context(
-    settings: Any, week_start: str, item_id: str
+    repo: Any, week_start: str, item_id: str
 ) -> tuple[str | None, str | None]:
     """Best-effort: find (person_name, group_name) for a plan item id by
-    reading the plan JSON for the given week. Fails silently — the
-    feedback row lands either way; enrichment is just for the summary."""
-    from relationship_intel.util.dates import parse_iso_date, week_label
-
-    try:
-        week_dt = parse_iso_date(week_start)
-    except ValueError:
-        return (None, None)
-    label = week_label(week_dt)
-    default_owner = settings.default_owner.lower()
-    filename = f"{label}-{default_owner}-succession-plan.json"
-    from relationship_intel.obsidian.writer import VaultWriter
-
-    writer = VaultWriter(settings.obsidian_vault_path, settings.obsidian_mode)
-    plan_path = writer.dir_for("weekly-plans") / filename
-    if not plan_path.exists():
-        return (None, None)
-    try:
-        plan = json.loads(plan_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return (None, None)
-    for group_name, items in (plan.get("groups") or {}).items():
-        for item in items:
-            if item.get("id") == item_id:
-                return (item.get("person_name"), group_name)
+    reading the `plans` table for the given week. Iterates every stored plan
+    for that week (one per owner), so operators who ran weekly-plan with a
+    non-default --owner still get enriched feedback rollups. Filesystem-free
+    on purpose — the old vault-walking path silently degraded whenever the
+    filename slug convention drifted from what the caller reconstructed
+    (gh #16 review-pass findings 1, 2, 5)."""
+    # top_plays is a derived top-3 view over hot/warm/overdue; needs_review is
+    # a metadata-flag view. Neither is a substantive pipeline group for tuning
+    # purposes, so report the "home" group when the item appears there too.
+    for row in repo.plans_for_week(week_start):
+        try:
+            plan = json.loads(row["plan_json"])
+        except json.JSONDecodeError:
+            continue
+        groups = plan.get("groups") or {}
+        # Two passes: substantive groups first, derived groups only as fallback.
+        for group_name, items in groups.items():
+            if group_name in _DERIVED_PLAN_GROUPS:
+                continue
+            for item in items:
+                if item.get("id") == item_id:
+                    return (item.get("person_name"), group_name)
+        for group_name in _DERIVED_PLAN_GROUPS:
+            for item in groups.get(group_name, []):
+                if item.get("id") == item_id:
+                    return (item.get("person_name"), group_name)
     return (None, None)
 
 
@@ -420,10 +424,10 @@ def main(argv: list[str] | None = None) -> int:
                         file=sys.stderr,
                     )
                     return 2
-                # Best-effort person_name / group_name lookup by scanning the
-                # most recent plan JSON for the given week.
+                # Best-effort person_name / group_name lookup by reading the
+                # `plans` table for the given week (all owners).
                 person_name, group_name = _lookup_plan_item_context(
-                    settings, args.week_start, args.item_id
+                    repo, args.week_start, args.item_id
                 )
                 repo.record_plan_feedback(
                     args.week_start,
@@ -456,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     print(
                         f"Plan feedback ({summary['weeks_covered']} week(s)"
-                        f"{f', last {args.weeks}' if args.weeks else ''}):"
+                        f"{f', last {args.weeks}' if args.weeks is not None else ''}):"
                     )
                     if not summary["totals"]:
                         print("  no feedback recorded yet")
