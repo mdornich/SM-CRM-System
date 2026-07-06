@@ -112,6 +112,23 @@ CREATE TABLE IF NOT EXISTS crm_review_items (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(object_type, local_id)
 );
+
+-- gh #16: weekly-plan learning loop. One row per (week, item) feedback
+-- event; multiple events per item are kept so we can see revisions over
+-- time (e.g. initially deferred, later acted on).
+CREATE TABLE IF NOT EXISTS plan_feedback (
+    id INTEGER PRIMARY KEY,
+    week_start TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    person_name TEXT,
+    group_name TEXT,
+    action TEXT NOT NULL,
+    notes TEXT,
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_plan_feedback_week ON plan_feedback(week_start);
+CREATE INDEX IF NOT EXISTS ix_plan_feedback_item ON plan_feedback(item_id);
 """
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import date, timedelta
 
 from relationship_intel import pipeline
@@ -153,3 +155,134 @@ def test_weekly_plan_writes_l1_promotion_proposal(settings, samples_dir):
     assert "Approval status: `proposed`" in text
     assert "cairns/L1/succession-pipeline.md" in text
     assert list((root / "promotion-proposals").glob("*.json"))
+
+
+def test_plan_items_have_stable_ids_for_feedback_loop(settings, samples_dir):
+    """gh #16: every plan item must carry an `id` field derived from a
+    stable (person, week) hash so the operator can record feedback against
+    a hash they copy out of the plan Markdown/JSON."""
+    pipeline.run_ingest(settings, samples_dir)
+    plan = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
+    all_items = [item for items in plan["groups"].values() for item in items]
+    assert all_items, "plan should have at least one item"
+    for item in all_items:
+        assert item.get("id"), f"item missing id: {item['person_name']}"
+    # Regenerating for the same week gives the SAME ids — feedback keeps
+    # working across re-runs.
+    plan_again = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
+    ids_first = {
+        (g, i["person_name"], i["id"]) for g, items in plan["groups"].items() for i in items
+    }
+    ids_second = {
+        (g, i["person_name"], i["id"]) for g, items in plan_again["groups"].items() for i in items
+    }
+    assert ids_first == ids_second
+
+
+def test_plan_feedback_record_and_summary(settings, samples_dir):
+    """gh #16: record captures the action, summary rolls up by group so
+    tuning decisions ('cold_retouch is acted 0/N, drop its weight') have
+    a data source."""
+    pipeline.run_ingest(settings, samples_dir)
+    plan = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
+    warm_items = plan["groups"]["warm"]
+    assert warm_items, "sample data should have at least one warm item to feedback on"
+    target = warm_items[0]
+
+    repo = pipeline.open_repo(settings)
+    repo.record_plan_feedback(
+        plan["week_start"],
+        target["id"],
+        "acted",
+        notes="called Tuesday AM, got voicemail",
+        person_name=target["person_name"],
+        group_name="warm",
+    )
+    repo.record_plan_feedback(
+        plan["week_start"],
+        target["id"],
+        "deferred",
+        person_name=target["person_name"],
+        group_name="warm",
+    )
+
+    rows = repo.plan_feedback_for_week(plan["week_start"])
+    assert len(rows) == 2  # both events kept — the revision history is the signal
+    actions = [r["action"] for r in rows]
+    assert actions == ["acted", "deferred"]
+
+    summary = repo.plan_feedback_summary()
+    assert summary["weeks_covered"] == 1
+    assert summary["by_group"]["warm"] == {"acted": 1, "deferred": 1}
+
+
+def test_plan_feedback_rejects_unknown_action(settings):
+    """gh #16: only the enum of {acted, deferred, rejected, ignored} is
+    accepted — guards against silent typos in a future UI or CLI."""
+    import pytest as _pytest
+
+    repo = pipeline.open_repo(settings)
+    with _pytest.raises(ValueError, match="plan-feedback action"):
+        repo.record_plan_feedback("2026-07-06", "abc123", "maybe")
+
+
+def test_plan_feedback_cli_record_and_summary(tmp_path, samples_dir):
+    """gh #16: CLI surface for record + summary. Uses run-demo to bootstrap
+    an ingest + plan, then records feedback and asserts the summary
+    reflects it."""
+    from relationship_intel.config import Settings
+
+    # Isolate all state under tmp_path.
+    settings = Settings(
+        llm_provider="mock",
+        obsidian_vault_path=tmp_path / "vault",
+        db_path=tmp_path / "ri.db",
+        mock_crm_path=tmp_path / "mock_crm",
+        crm_review_required=False,
+    )
+    pipeline.run_ingest(settings, samples_dir)
+    plan = pipeline.run_weekly_plan(settings, run_date=date(2026, 7, 4))
+    (target,) = plan["groups"]["top_plays"][:1] or plan["groups"]["warm"][:1]
+
+    env = {
+        "PATH": subprocess.os.environ["PATH"],
+        "HOME": subprocess.os.environ["HOME"],
+        "OBSIDIAN_VAULT_PATH": str(settings.obsidian_vault_path),
+        "RI_DB_PATH": str(settings.db_path),
+        "RI_MOCK_CRM_PATH": str(settings.mock_crm_path),
+        "CRM_REVIEW_REQUIRED": "false",
+    }
+
+    record = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "relationship_intel.cli",
+            "plan-feedback",
+            "record",
+            "--week-start",
+            plan["week_start"],
+            "--item-id",
+            target["id"],
+            "--action",
+            "acted",
+            "--notes",
+            "cli test",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert record.returncode == 0, record.stderr
+    assert "Recorded: acted" in record.stdout
+
+    summary = subprocess.run(
+        [sys.executable, "-m", "relationship_intel.cli", "plan-feedback", "summary", "--json"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert summary.returncode == 0, summary.stderr
+    payload = json.loads(summary.stdout)
+    assert payload["weeks_covered"] == 1
+    assert payload["totals"]["acted"] == 1

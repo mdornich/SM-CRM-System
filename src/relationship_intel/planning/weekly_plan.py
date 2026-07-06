@@ -18,6 +18,7 @@ from relationship_intel.obsidian.links import transcript_note_name, wikilink
 from relationship_intel.planning.message_drafts import draft_for
 from relationship_intel.store.repository import Repository
 from relationship_intel.util.dates import parse_iso_date, week_label
+from relationship_intel.util.hashing import short_hash
 
 _URGENCY_RANK = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
 _DUE_WINDOW_DAYS = {"immediate": 1, "this_week": 7, "two_weeks": 14}
@@ -81,7 +82,13 @@ def build_plan(
         transcript_links = [
             wikilink(transcript_note_name(d, t, h), t) for d, t, h in rec.transcripts
         ]
+        # Stable per-(person, week) item id for the plan-feedback loop
+        # (gh #16). Same person in the same week = same id, so feedback
+        # can be recorded against a hash the operator can copy from the
+        # plan Markdown/JSON and pipe back into `plan-feedback record`.
+        item_id = short_hash(f"{rec.id}|{week_start.isoformat()}")
         item = {
+            "id": item_id,
             "person_name": rec.name,
             "company_name": rec.company_name,
             "stage": profile.get("stage", "new"),
@@ -181,7 +188,8 @@ def _render_item(index: int, item: dict) -> list[str]:
     lines = [
         f"{index}. **{item['person_name']}**"
         + (f" — {item['company_name']}" if item["company_name"] else "")
-        + f" · {item['lead_type']} / {item['timing_window']} / score {item['priority_score']}",
+        + f" · {item['lead_type']} / {item['timing_window']} / score {item['priority_score']}"
+        + f"  `id: {item['id']}`",
         f"   - Why now: {item['why_now']}",
     ]
     if item["next_action"]:

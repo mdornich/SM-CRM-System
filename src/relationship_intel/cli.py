@@ -46,6 +46,38 @@ def _print_json(payload: Any) -> None:
     print(json.dumps(payload, default=_json_default, indent=2, sort_keys=True))
 
 
+def _lookup_plan_item_context(
+    settings: Any, week_start: str, item_id: str
+) -> tuple[str | None, str | None]:
+    """Best-effort: find (person_name, group_name) for a plan item id by
+    reading the plan JSON for the given week. Fails silently — the
+    feedback row lands either way; enrichment is just for the summary."""
+    from relationship_intel.util.dates import parse_iso_date, week_label
+
+    try:
+        week_dt = parse_iso_date(week_start)
+    except ValueError:
+        return (None, None)
+    label = week_label(week_dt)
+    default_owner = settings.default_owner.lower()
+    filename = f"{label}-{default_owner}-succession-plan.json"
+    from relationship_intel.obsidian.writer import VaultWriter
+
+    writer = VaultWriter(settings.obsidian_vault_path, settings.obsidian_mode)
+    plan_path = writer.dir_for("weekly-plans") / filename
+    if not plan_path.exists():
+        return (None, None)
+    try:
+        plan = json.loads(plan_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return (None, None)
+    for group_name, items in (plan.get("groups") or {}).items():
+        for item in items:
+            if item.get("id") == item_id:
+                return (item.get("person_name"), group_name)
+    return (None, None)
+
+
 def _render_query(kind: str, rows: list[dict]) -> str:
     if not rows:
         return f"No {kind} results."
@@ -169,6 +201,40 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     review_ui.add_argument("--host", default="127.0.0.1")
     review_ui.add_argument("--port", type=int, default=8765)
+
+    plan_feedback = sub.add_parser(
+        "plan-feedback",
+        help="record or summarize plan-item feedback (gh #16 learning loop)",
+        parents=[output_parent],
+    )
+    plan_feedback.add_argument(
+        "mode",
+        choices=["record", "summary"],
+        help="record: log an action for a plan item. summary: rollup of history.",
+    )
+    plan_feedback.add_argument(
+        "--week-start",
+        default=None,
+        help="ISO date (Monday) for record mode; ignored in summary mode.",
+    )
+    plan_feedback.add_argument(
+        "--item-id",
+        default=None,
+        help="hash id from the plan Markdown or JSON (record mode only)",
+    )
+    plan_feedback.add_argument(
+        "--action",
+        default=None,
+        choices=["acted", "deferred", "rejected", "ignored"],
+        help="operator's actual decision on this item (record mode only)",
+    )
+    plan_feedback.add_argument("--notes", default=None)
+    plan_feedback.add_argument(
+        "--weeks",
+        type=int,
+        default=None,
+        help="summary mode: only include the last N distinct weeks",
+    )
     return parser
 
 
@@ -344,6 +410,60 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(summary)
             else:
                 print(f"Review queue: {summary['count']} item(s) {summary['by_status']}")
+
+        elif args.command == "plan-feedback":
+            repo = pipeline.open_repo(settings)
+            if args.mode == "record":
+                if not (args.week_start and args.item_id and args.action):
+                    print(
+                        "plan-feedback record requires --week-start, --item-id, --action",
+                        file=sys.stderr,
+                    )
+                    return 2
+                # Best-effort person_name / group_name lookup by scanning the
+                # most recent plan JSON for the given week.
+                person_name, group_name = _lookup_plan_item_context(
+                    settings, args.week_start, args.item_id
+                )
+                repo.record_plan_feedback(
+                    args.week_start,
+                    args.item_id,
+                    args.action,
+                    args.notes,
+                    person_name=person_name,
+                    group_name=group_name,
+                )
+                payload = {
+                    "recorded": True,
+                    "week_start": args.week_start,
+                    "item_id": args.item_id,
+                    "action": args.action,
+                    "person_name": person_name,
+                    "group_name": group_name,
+                }
+                if args.json_output:
+                    _print_json(payload)
+                else:
+                    context = f" ({person_name})" if person_name else ""
+                    print(
+                        f"Recorded: {args.action} on {args.item_id}"
+                        f"{context} for week of {args.week_start}"
+                    )
+            else:  # summary
+                summary = repo.plan_feedback_summary(args.weeks)
+                if args.json_output:
+                    _print_json(summary)
+                else:
+                    print(
+                        f"Plan feedback ({summary['weeks_covered']} week(s)"
+                        f"{f', last {args.weeks}' if args.weeks else ''}):"
+                    )
+                    if not summary["totals"]:
+                        print("  no feedback recorded yet")
+                    for group, actions in sorted(summary["by_group"].items()):
+                        print(f"  {group}: {actions}")
+                    if summary["totals"]:
+                        print(f"  totals: {summary['totals']}")
 
         elif args.command == "review-ui":
             if args.json_output:

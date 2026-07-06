@@ -436,6 +436,78 @@ class Repository:
         )
         self.conn.commit()
 
+    # -- plan feedback (gh #16 learning loop) ----------------------------------
+
+    _PLAN_FEEDBACK_ACTIONS = frozenset({"acted", "deferred", "rejected", "ignored"})
+
+    def record_plan_feedback(
+        self,
+        week_start: str,
+        item_id: str,
+        action: str,
+        notes: str | None = None,
+        person_name: str | None = None,
+        group_name: str | None = None,
+    ) -> None:
+        """Record what the operator actually did with a weekly-plan item.
+
+        `action` ∈ {acted, deferred, rejected, ignored}. Multiple rows per
+        (week, item) are allowed — the tail records revisions (e.g., initially
+        deferred, later acted on) so the tuning signal captures the operator's
+        actual decision path, not just the final state.
+        """
+        if action not in self._PLAN_FEEDBACK_ACTIONS:
+            raise ValueError(f"unsupported plan-feedback action: {action!r}")
+        self.conn.execute(
+            "INSERT INTO plan_feedback"
+            " (week_start, item_id, person_name, group_name, action, notes)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (week_start, item_id, person_name, group_name, action, notes),
+        )
+        self.conn.commit()
+
+    def plan_feedback_for_week(self, week_start: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM plan_feedback WHERE week_start = ? ORDER BY recorded_at",
+            (week_start,),
+        ).fetchall()
+
+    def plan_feedback_summary(self, weeks: int | None = None) -> dict:
+        """Rollup of the last N weeks (or all-time when None). Surfaces the
+        signal to tune with — e.g. 'cold_retouch is acted_on 0/12 → drop its
+        weight'; 'top_plays hit rate 8/12'."""
+        query = (
+            "SELECT group_name, action, count(*) AS n"
+            " FROM plan_feedback"
+            " {where} GROUP BY group_name, action ORDER BY group_name, action"
+        )
+        where = ""
+        params: tuple = ()
+        if weeks is not None:
+            recent = self.conn.execute(
+                "SELECT DISTINCT week_start FROM plan_feedback ORDER BY week_start DESC LIMIT ?",
+                (weeks,),
+            ).fetchall()
+            if not recent:
+                return {"weeks_covered": 0, "by_group": {}, "totals": {}}
+            week_list = [row["week_start"] for row in recent]
+            placeholders = ",".join(["?"] * len(week_list))
+            where = f"WHERE week_start IN ({placeholders})"
+            params = tuple(week_list)
+        by_group: dict[str, dict[str, int]] = {}
+        totals: dict[str, int] = {}
+        for row in self.conn.execute(query.format(where=where), params).fetchall():
+            group = row["group_name"] or "unknown"
+            action = row["action"]
+            by_group.setdefault(group, {})[action] = row["n"]
+            totals[action] = totals.get(action, 0) + row["n"]
+        weeks_covered = self.conn.execute(
+            "SELECT COUNT(DISTINCT week_start) AS n FROM plan_feedback"
+            + (f" WHERE week_start IN ({','.join(['?'] * len(params))})" if params else ""),
+            params,
+        ).fetchone()["n"]
+        return {"weeks_covered": weeks_covered, "by_group": by_group, "totals": totals}
+
     # -- plans -----------------------------------------------------------------
 
     def save_plan(self, owner: str, week_start: str, plan_json: str) -> None:
