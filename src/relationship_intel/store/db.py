@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS companies (
     website TEXT,
     industry TEXT,
     location TEXT,
-    ownership_context TEXT
+    ownership_context TEXT,
+    review_status TEXT NOT NULL DEFAULT 'unreviewed'
 );
 
 CREATE TABLE IF NOT EXISTS people (
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS lead_profiles (
     transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
     profile_json TEXT NOT NULL,
     lens_version TEXT NOT NULL,
-    llm_provider TEXT NOT NULL
+    llm_provider TEXT NOT NULL,
+    review_status TEXT NOT NULL DEFAULT 'unreviewed'
 );
 
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     owner TEXT,
     next_action TEXT,
     next_action_due TEXT,
+    review_status TEXT NOT NULL DEFAULT 'unreviewed',
     UNIQUE(person_id, company_id)
 );
 
@@ -112,6 +115,25 @@ CREATE TABLE IF NOT EXISTS crm_review_items (
 """
 
 
+# Additive migrations for existing DBs. SQLite has no ADD COLUMN IF NOT EXISTS,
+# so we probe PRAGMA table_info first. Only add columns — never rename or drop.
+_ADDITIVE_COLUMNS = {
+    "companies": [("review_status", "TEXT NOT NULL DEFAULT 'unreviewed'")],
+    "opportunities": [("review_status", "TEXT NOT NULL DEFAULT 'unreviewed'")],
+    "lead_profiles": [("review_status", "TEXT NOT NULL DEFAULT 'unreviewed'")],
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, columns in _ADDITIVE_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for column_name, column_ddl in columns:
+            if column_name in existing:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_name} {column_ddl}")
+    conn.commit()
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,4 +141,5 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn

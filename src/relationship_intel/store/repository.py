@@ -417,6 +417,25 @@ class Repository:
             ).fetchall()
         }
 
+    # -- review status (ORD-0003 promotion gate; architecture.md §3.5) ---------
+
+    _REVIEW_STATUS_TABLES = frozenset({"people", "companies", "opportunities", "lead_profiles"})
+    _REVIEW_STATUS_VALUES = frozenset({"unreviewed", "reviewed", "corrected", "confirmed"})
+
+    def set_review_status(self, table: str, local_id: int, status: str) -> None:
+        """Flip an intelligence artifact's review_status. Only reviewed /
+        corrected / confirmed records are candidates for L1 promotion —
+        unreviewed synthesis never promotes automatically (ORD-0003)."""
+        if table not in self._REVIEW_STATUS_TABLES:
+            raise ValueError(f"unsupported review_status table: {table!r}")
+        if status not in self._REVIEW_STATUS_VALUES:
+            raise ValueError(f"unsupported review_status value: {status!r}")
+        self.conn.execute(
+            f"UPDATE {table} SET review_status = ? WHERE id = ?",
+            (status, local_id),
+        )
+        self.conn.commit()
+
     # -- plans -----------------------------------------------------------------
 
     def save_plan(self, owner: str, week_start: str, plan_json: str) -> None:
@@ -501,6 +520,7 @@ class Repository:
                     evidence=evidence,
                     transcripts=transcripts,
                     owner=owner_row["owner"] if owner_row else None,
+                    review_status=row["review_status"],
                 )
             )
         return records
@@ -595,6 +615,7 @@ class Repository:
                     owner=company_owner,
                     evidence=evidence,
                     transcripts=transcripts,
+                    review_status=row["review_status"],
                 )
             )
         return records
@@ -645,6 +666,7 @@ class Repository:
                     stated_goals=list(profile.get("stated_goals") or []),
                     business_owner_signal=profile.get("business_owner_signal"),
                     exit_or_transition_signal=profile.get("exit_or_transition_signal"),
+                    review_status=row["review_status"],
                 )
             )
         return records

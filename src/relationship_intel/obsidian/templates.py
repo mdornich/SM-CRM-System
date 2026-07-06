@@ -19,11 +19,13 @@ def _link_or_name(slug_map: dict[str, str], name: str) -> str:
     return wikilink(slug, name) if slug else name
 
 
-def _base_frontmatter(note_type: str, llm_provider: str) -> list[tuple[str, object]]:
+def _base_frontmatter(
+    note_type: str, llm_provider: str, review_status: str = "unreviewed"
+) -> list[tuple[str, object]]:
     return [
         ("type", note_type),
         ("generated_by", GENERATED_BY),
-        ("review_status", "unreviewed"),
+        ("review_status", review_status),
         ("llm_provider", llm_provider),
     ]
 
@@ -99,7 +101,7 @@ def person_note(
 ) -> tuple[str, list[tuple[str, object]], str]:
     profile = rec.profile or {}
     owner = rec.owner or default_owner
-    fm = _base_frontmatter("person", llm_provider) + [
+    fm = _base_frontmatter("person", llm_provider, rec.review_status) + [
         ("name", rec.name),
         ("email", rec.email),
         ("company", rec.company_name),
@@ -172,7 +174,7 @@ def company_note(
     rec: CompanyRecord, llm_provider: str, default_owner: str | None = None
 ) -> tuple[str, list[tuple[str, object]], str]:
     owner = rec.owner or default_owner
-    fm = _base_frontmatter("company", llm_provider) + [
+    fm = _base_frontmatter("company", llm_provider, rec.review_status) + [
         ("name", rec.name),
         ("industry", rec.industry),
         ("location", rec.location),
@@ -215,7 +217,7 @@ def opportunity_note(
     rec: OpportunityRecord, llm_provider: str, default_owner: str | None = None
 ) -> tuple[str, list[tuple[str, object]], str]:
     owner = rec.owner or default_owner
-    fm = _base_frontmatter("opportunity", llm_provider) + [
+    fm = _base_frontmatter("opportunity", llm_provider, rec.review_status) + [
         ("name", rec.name),
         ("company", rec.company_name),
         ("primary_contact", rec.person_name),

@@ -244,6 +244,77 @@ def test_company_owner_from_latest_of_multiple_opps_at_same_company(tmp_path):
     assert company.owner == "alice@nine80.ai"
 
 
+def test_review_status_symmetric_across_person_company_opportunity(tmp_path, samples_dir):
+    """gh #11: review_status must live on companies, opportunities, and
+    lead_profiles — not just people — and the note FM must reflect the DB
+    value so a future review action visibly promotes an artifact."""
+    settings = Settings(
+        obsidian_vault_path=tmp_path / "vault",
+        db_path=tmp_path / "ri.db",
+        mock_crm_path=tmp_path / "mock_crm",
+    )
+    pipeline.run_ingest(settings, samples_dir)
+    repo = pipeline.open_repo(settings)
+    bob = next(p for p in repo.people_records() if p.name == "Bob Smith")
+    company = next(c for c in repo.company_records() if c.name == "Smith HVAC")
+    (opp,) = repo.opportunity_records()
+
+    # All three records default to unreviewed on the read side.
+    assert bob.review_status == "unreviewed"
+    assert company.review_status == "unreviewed"
+    assert opp.review_status == "unreviewed"
+
+    # Set each to a different status and re-render — the note FM tracks it.
+    repo.set_review_status("people", bob.id, "reviewed")
+    repo.set_review_status("companies", company.id, "confirmed")
+    repo.set_review_status("opportunities", opp.id, "corrected")
+
+    pipeline._write_entity_notes(repo, VaultWriter(tmp_path / "vault2"), "mock", "James")
+    people_dir = tmp_path / "vault2" / "relationship-intelligence" / "people"
+    company_dir = tmp_path / "vault2" / "relationship-intelligence" / "companies"
+    opp_dir = tmp_path / "vault2" / "relationship-intelligence" / "opportunities"
+    assert "review_status: reviewed" in (people_dir / f"{bob.slug}.md").read_text()
+    assert "review_status: confirmed" in (company_dir / f"{company.slug}.md").read_text()
+    assert "review_status: corrected" in (opp_dir / f"{opp.slug}.md").read_text()
+
+
+def test_review_status_migration_adds_missing_columns_to_existing_db(tmp_path):
+    """A DB created before the review_status columns were added must gain
+    them on next connect() without losing rows."""
+    import sqlite3
+
+    from relationship_intel.store.db import connect
+
+    db_path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE companies (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL, domain TEXT, website TEXT,
+            industry TEXT, location TEXT, ownership_context TEXT);
+        CREATE TABLE opportunities (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+            person_id INTEGER, company_id INTEGER, stage TEXT NOT NULL,
+            lead_type TEXT NOT NULL, succession_signal_score INTEGER,
+            urgency TEXT, timing_window TEXT, owner TEXT,
+            next_action TEXT, next_action_due TEXT);
+        CREATE TABLE lead_profiles (id INTEGER PRIMARY KEY, person_id INTEGER,
+            transcript_id INTEGER, profile_json TEXT NOT NULL,
+            lens_version TEXT NOT NULL, llm_provider TEXT NOT NULL);
+        INSERT INTO companies (name, normalized_name) VALUES ('Acme', 'acme');
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    conn = connect(db_path)
+    for table in ("companies", "opportunities", "lead_profiles"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        assert "review_status" in columns, f"{table} missing review_status after migration"
+    # Legacy row survived and got the default value.
+    (acme,) = conn.execute("SELECT review_status FROM companies WHERE name = 'Acme'").fetchall()
+    assert acme["review_status"] == "unreviewed"
+
+
 def test_yaml_value_escapes_newlines_and_backslashes():
     from relationship_intel.util.markdown import yaml_value
 

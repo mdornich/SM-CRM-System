@@ -24,6 +24,7 @@ class PersonRecord:
     """(meeting_date, title, transcript_hash) triples, in interaction order."""
     owner: str | None = None
     """Derived from any linked opportunity's owner — used by the person note FM."""
+    review_status: str = "unreviewed"
 
 
 @dataclass
@@ -45,6 +46,7 @@ class CompanyRecord:
     owner: str | None = None
     evidence: list[str] = field(default_factory=list)
     transcripts: list[tuple[str | None, str, str]] = field(default_factory=list)
+    review_status: str = "unreviewed"
 
 
 @dataclass
@@ -73,6 +75,7 @@ class OpportunityRecord:
     stated_goals: list[str] = field(default_factory=list)
     business_owner_signal: bool | None = None
     exit_or_transition_signal: bool | None = None
+    review_status: str = "unreviewed"
 
 
 @dataclass
