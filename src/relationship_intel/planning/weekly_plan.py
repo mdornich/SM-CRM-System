@@ -183,55 +183,165 @@ def _crm_link(repo: Repository, person_id: int) -> str | None:
 
 # -- renderings -----------------------------------------------------------------
 
+_HUMAN_TIMING = {
+    "immediate": "immediate",
+    "0_3_months": "0–3 months",
+    "3_6_months": "3–6 months",
+    "6_12_months": "6–12 months",
+    "long_term": "long-term",
+    "unknown": None,
+}
+_HUMAN_LEAD_TYPE = {
+    "cold": "cold",
+    "warm": "warm",
+    "active": "active opportunity",
+    "referral_source": "referral source",
+    "partner": "partner",
+    "not_fit": "not fit",
+    "unknown": "unknown",
+}
+_HUMAN_URGENCY = {"high": "high urgency", "medium": "medium urgency", "low": "low urgency"}
+
+
+def _humanize_timing(value: str | None) -> str | None:
+    if value in (None, "", "unknown"):
+        return None
+    return _HUMAN_TIMING.get(value, value.replace("_", " "))
+
+
+def _humanize_lead_type(value: str | None) -> str:
+    if not value:
+        return "unknown"
+    return _HUMAN_LEAD_TYPE.get(value, value.replace("_", " "))
+
+
+def _humanize_due(value: str | None) -> str | None:
+    if not value or value == "unknown":
+        return None
+    return value.replace("_", " ")
+
 
 def _render_item(index: int, item: dict) -> list[str]:
-    lines = [
-        f"{index}. **{item['person_name']}**"
-        + (f" — {item['company_name']}" if item["company_name"] else "")
-        + f" · {item['lead_type']} / {item['timing_window']} / score {item['priority_score']}"
-        + f"  `id: {item['id']}`",
-        f"   - Why now: {item['why_now']}",
-    ]
+    """Human-readable per-item block. Meta (lead type / timing / score) lives
+    on a subtle context line at the bottom, not stuffed into the header.
+    Item id is embedded as an HTML comment so it stays copyable for the
+    feedback loop but doesn't clutter the read."""
+    name = item["person_name"]
+    company = item.get("company_name")
+    heading = f"### {index}. {name}"
+    if company:
+        heading += f" — {company}"
+
+    lines: list[str] = [heading, ""]
+
+    if item.get("why_now"):
+        lines += [f"**Why now:** {item['why_now']}", ""]
+
     if item["next_action"]:
-        lines.append(
-            f"   - Next action: {item['next_action']}"
-            + (
-                f" (due: {item['next_action_due_window']})"
-                if item["next_action_due_window"]
-                else ""
-            )
-        )
+        lines.append(f"**Next action:** {item['next_action']}")
+        due = _humanize_due(item.get("next_action_due_window"))
+        if due:
+            lines.append(f"*Due:* {due}")
+        lines.append("")
+
     if item["suggested_message"]:
-        lines.append(f"   - {item['suggested_message']}")
+        # message_drafts.draft_for() prefixes with "DRAFT — not sent: " —
+        # keep that marker literal so it survives any downstream automated
+        # scan for the "never sent" invariant, but render it as a bolded
+        # label above a blockquote of the actual message body.
+        raw = item["suggested_message"]
+        prefix = "DRAFT — not sent:"
+        body = raw[len(prefix) :].strip() if raw.startswith(prefix) else raw
+        lines += ["**DRAFT — not sent:**", "", f"> {body}", ""]
+
+    # Context line: humanized lead type · timing · score · urgency.
+    context_bits: list[str] = [_humanize_lead_type(item.get("lead_type"))]
+    timing = _humanize_timing(item.get("timing_window"))
+    if timing:
+        context_bits.append(timing)
+    if item.get("priority_score"):
+        context_bits.append(f"signal score {item['priority_score']}")
+    urgency_human = _HUMAN_URGENCY.get(item.get("urgency") or "", None)
+    if urgency_human:
+        context_bits.append(urgency_human)
+    lines.append(f"*Context:* {' · '.join(context_bits)}")
+
     if item["evidence_links"]:
-        lines.append(f"   - Evidence: {', '.join(item['evidence_links'])}")
-    lines.append(f"   - Profile: {item['obsidian_link']}")
+        lines.append(f"*Evidence:* {', '.join(item['evidence_links'])}")
+    lines.append(f"*Profile:* {item['obsidian_link']}")
     if item["crm_link"]:
-        lines.append(f"   - CRM: {item['crm_link']}")
+        lines.append(f"*CRM:* {item['crm_link']}")
+
+    # Hidden anchor for the plan-feedback CLI copy-paste flow (gh #16).
+    lines += ["", f"<!-- item-id: {item['id']} -->", ""]
     return lines
 
 
 def _render_group(heading: str, items: list[dict], empty: str) -> list[str]:
-    lines = [f"## {heading}", ""]
+    """Group section. Empty groups collapse to a one-liner so the plan reads
+    tight when there's nothing in a bucket."""
     if not items:
-        lines += [f"_{empty}_", ""]
-        return lines
+        return [f"## {heading}", "", f"*{empty}*", ""]
+    lines = [f"## {heading}", ""]
     for i, item in enumerate(items, 1):
         lines += _render_item(i, item)
-        lines.append("")
     return lines
+
+
+def _render_summary(plan: dict) -> list[str]:
+    """One-glance summary of what's in the plan this week."""
+    g = plan["groups"]
+    counts = {name: len(g[name]) for name in g}
+
+    def plural(n: int, singular: str, plural: str | None = None) -> str:
+        return singular if n == 1 else (plural or singular + "s")
+
+    bullets: list[str] = []
+    if counts["top_plays"]:
+        names = ", ".join(item["person_name"] for item in g["top_plays"][:3])
+        bullets.append(
+            f"**{counts['top_plays']}** {plural(counts['top_plays'], 'top play')} "
+            f"this week: {names}"
+        )
+    if counts["overdue"]:
+        bullets.append(f"**{counts['overdue']}** overdue — action needed")
+    if counts["warm"]:
+        bullets.append(f"**{counts['warm']}** warm {plural(counts['warm'], 'follow-up')}")
+    if counts["cold_retouch"]:
+        n = counts["cold_retouch"]
+        bullets.append(f"**{n}** cold {plural(n, 'retouch', 'retouches')} due")
+    if counts["referral_nurture"]:
+        n = counts["referral_nurture"]
+        bullets.append(f"**{n}** {plural(n, 'referral / partner')} to nurture")
+    if counts["stalled"]:
+        bullets.append(f"**{counts['stalled']}** stalled — worth a check-in")
+    if counts["needs_review"]:
+        bullets.append(f"**{counts['needs_review']}** flagged for identity review")
+    tail_bits = []
+    if counts["long_term"]:
+        tail_bits.append(f"long-term nurture: {counts['long_term']}")
+    if counts["not_ready"]:
+        tail_bits.append(f"not ready: {counts['not_ready']}")
+    if tail_bits:
+        bullets.append("Also tracked — " + " · ".join(tail_bits))
+    if not bullets:
+        bullets.append("Light week — nothing needs your attention.")
+    return ["## This week at a glance", ""] + [f"- {b}" for b in bullets] + [""]
 
 
 def to_markdown(plan: dict) -> str:
     g = plan["groups"]
+    # Week header — friendlier date phrasing than raw ISO.
     lines = [
-        f"# Weekly Succession Follow-Up Plan — {plan['week_start']}",
+        f"# Weekly Succession Plan — Week of {plan['week_start']}",
         "",
-        f"Owner: {plan['owner']} · Week {plan['week_label']} "
+        f"*{plan['owner']} · Week {plan['week_label']} "
         f"({plan['week_start']} → {plan['week_end']}) · "
-        f"extraction: `{plan['llm_provider']}`",
+        f"extraction: `{plan['llm_provider']}`*",
         "",
     ]
+    lines += _render_summary(plan)
+    lines += ["---", ""]
     lines += _render_group("Top Plays This Week", g["top_plays"], "nothing urgent this week")
     lines += _render_group("Overdue", g["overdue"], "nothing overdue")
     lines += _render_group("Warm Follow-Ups", g["warm"], "no warm leads yet")
@@ -247,30 +357,40 @@ def to_markdown(plan: dict) -> str:
     lines += [
         "## Risks",
         "",
-        f"_Long-term nurture: {len(g['long_term'])} · Not ready: {len(g['not_ready'])}._",
-        "All drafts above are proposals — nothing is sent by this system.",
+        f"*Long-term nurture: {len(g['long_term'])} · Not ready: {len(g['not_ready'])}*",
+        "",
+        "*All drafts above are proposals — nothing is sent by this system.*",
         "",
     ]
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _render_time_blocks(groups: dict[str, list[dict]]) -> list[str]:
-    """Deterministic time-block heuristic — same input, same output. Owner uses
-    these as prompts, not commitments."""
-    blocks: list[tuple[str, int, str]] = [
-        ("Mon AM — plan the week", len(groups["top_plays"]), "top plays"),
-        ("Tue AM — warm follow-ups", len(groups["warm"]), "warm follow-ups"),
-        ("Wed AM — overdue cleanup", len(groups["overdue"]), "overdue items"),
-        ("Thu PM — cold retouches", len(groups["cold_retouch"]), "cold retouches"),
-        ("Fri AM — referral / partner nurture", len(groups["referral_nurture"]), "referrals"),
+    """Deterministic time-block heuristic — same input, same output. Owner
+    uses these as prompts, not commitments. Grammar respects singular vs
+    plural (one warm follow-up, three warm follow-ups)."""
+    blocks: list[tuple[str, int, str, str]] = [
+        ("Monday morning", len(groups["top_plays"]), "top play", "plan the week"),
+        ("Tuesday morning", len(groups["warm"]), "warm follow-up", None),
+        ("Wednesday morning", len(groups["overdue"]), "overdue item", "clean up"),
+        ("Thursday afternoon", len(groups["cold_retouch"]), "cold retouch", None),
+        (
+            "Friday morning",
+            len(groups["referral_nurture"]),
+            "referral / partner",
+            "nurture",
+        ),
     ]
-    lines = ["## Suggested Time Blocks", ""]
-    if not any(count for _, count, _ in blocks):
-        lines += ["_No items to block — light week._", ""]
+    lines = ["## Suggested time blocks", ""]
+    if not any(count for _, count, *_ in blocks):
+        lines += ["*Light week — no items to block.*", ""]
         return lines
-    for label, count, kind in blocks:
-        if count:
-            lines.append(f"- **{label}** — {count} {kind}")
+    for label, count, singular, suffix in blocks:
+        if not count:
+            continue
+        item_text = f"{count} {singular}" if count == 1 else f"{count} {singular}s"
+        tail = f" — {suffix}" if suffix else ""
+        lines.append(f"- **{label}** — {item_text}{tail}")
     lines.append("")
     return lines
 
