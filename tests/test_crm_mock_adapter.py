@@ -199,6 +199,50 @@ def test_pipeline_items_round_trip(settings, samples_dir):
     assert items[0].crm_ref is not None
 
 
+def test_reviewer_cleared_stage_never_reaches_adapter_as_none(settings, samples_dir):
+    """Reviewer clears stage → payload contains stage=None. The fix MUST
+    mutate payload['stage'] to the DB fallback, not just patch a local
+    variable — otherwise the adapter still receives stage=None and the sync
+    crashes on the STAGE_MAP unknown-key branch.
+    (Verified follow-on finding from /code-review round 3.)"""
+    from dataclasses import replace
+
+    from relationship_intel.crm.mock_adapter import MockCRMAdapter
+    from relationship_intel.crm.sync import sync_to_crm
+
+    reviewed = replace(settings, crm_review_required=True)
+    pipeline.run_ingest(reviewed, samples_dir)
+    repo = pipeline.open_repo(reviewed)
+    bob = next(p for p in repo.people_records() if p.name == "Bob Smith")
+    company = next(c for c in repo.company_records() if c.name == "Smith HVAC")
+    (opp,) = repo.opportunity_records()
+    db_stage = opp.stage
+
+    repo.set_review_item(
+        "opportunity",
+        opp.id,
+        "approved",
+        {"name": opp.name, "stage": None, "lead_type": opp.lead_type},
+    )
+    repo.set_review_item("person", bob.id, "approved", {"name": bob.name})
+    repo.set_review_item("company", company.id, "approved", {"name": company.name})
+
+    captured: list[dict] = []
+
+    class CapturingAdapter(MockCRMAdapter):
+        provider = "twenty"
+
+        def create_or_update_opportunity(self, opportunity: dict):
+            captured.append(dict(opportunity))
+            return super().create_or_update_opportunity(opportunity)
+
+    adapter = CapturingAdapter(reviewed.mock_crm_path)
+    sync_to_crm(repo, adapter, reviewed.default_owner, approved_only=True)
+    assert captured, "opportunity should have reached the adapter"
+    assert captured[0]["stage"] == db_stage
+    assert captured[0]["stage"] is not None
+
+
 def test_reviewer_cleared_stage_defensively_falls_back_to_db_stage(settings, samples_dir):
     """Reviewer clears the stage field (payload = {'stage': None}). The
     NO_OPP_STAGES filter must not fall through — we defensively fall back to

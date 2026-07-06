@@ -222,8 +222,12 @@ def sync_to_crm(
         # filter and detonate the sync mid-loop. `or opp.stage` (not
         # `dict.get(k, default)`) because a reviewer can clear the field to
         # an explicit None — we defensively fall back to the DB value rather
-        # than push a None-stage payload the adapter will choke on.
+        # than push a None-stage payload the adapter will choke on. Mutating
+        # `payload["stage"]` here (not just a local) is what actually keeps
+        # None out of the adapter — the local check alone would leave the
+        # payload dict carrying the reviewer's None into create_or_update.
         effective_stage = payload.get("stage") or opp.stage
+        payload["stage"] = effective_stage
         if twenty_provider and effective_stage in NO_OPP_STAGES:
             stats["skipped_by_stage"] += 1
             logger.info(
@@ -250,23 +254,17 @@ def sync_to_crm(
         stats["opportunities" if pushed else "skipped"] += 1
 
     logger.info("CRM sync (%s): %s", adapter.provider, stats)
-    # If review-gated and nothing landed AND we skipped items because they
-    # weren't approved, surface a clear hint so a user who inherited the
-    # flipped default (CRM_REVIEW_REQUIRED=true) doesn't stare at empty
-    # stats and think extraction produced nothing. Gates on
-    # `skipped_not_approved` specifically — NOT the general `skipped`
-    # counter — so an idempotent re-sync where everything is already in
-    # the CRM (all hash-matches → stats["skipped"]) doesn't misfire this
-    # warning. `pushed_total` includes notes and tasks so a run that only
-    # writes new notes/tasks doesn't trip the "pushed 0" branch either.
-    pushed_total = (
-        stats["companies"]
-        + stats["people"]
-        + stats["opportunities"]
-        + stats["notes"]
-        + stats["tasks"]
-    )
-    if approved_only and pushed_total == 0 and stats["skipped_not_approved"] > 0:
+    # Warning gate: fire only when nothing landed at the top level AND some
+    # items were held back by the review gate. Two prior misfires guarded here:
+    #   1. `skipped_not_approved > 0` (not the general `skipped` counter) so
+    #      an idempotent re-sync where everything hash-matches doesn't warn.
+    #   2. Check only companies/people/opportunities for pushed_top_level —
+    #      notes/tasks land inside an already-approved person block, so
+    #      including them here would silence the warning in the case where
+    #      the user forgot to approve any top-level entities but a stale
+    #      profile change happens to write a note.
+    pushed_top_level = stats["companies"] + stats["people"] + stats["opportunities"]
+    if approved_only and pushed_top_level == 0 and stats["skipped_not_approved"] > 0:
         logger.warning(
             "sync_to_crm found %d unapproved review item(s) and pushed 0 — "
             "review-required mode is on (CRM_REVIEW_REQUIRED=true). "
