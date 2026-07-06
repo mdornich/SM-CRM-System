@@ -13,6 +13,14 @@ set -a
 source .env
 set +a
 
-source .venv/bin/activate
+# Venv is installed OUTSIDE ~/Documents/ so macOS TCC / Full Disk Access
+# never blocks the LaunchAgent context. Fallback to the repo-local dev
+# venv when the ~/.venvs one is missing (useful for `./scripts/…` runs
+# by a fresh clone before install).
+VENV="$HOME/.venvs/sm-crm-system"
+if [[ ! -d "$VENV" ]]; then
+    VENV="$REPO_DIR/.venv"
+fi
+source "$VENV/bin/activate"
 
 exec python -m relationship_intel.cli review-ui --host 127.0.0.1 --port 8765
