@@ -53,6 +53,12 @@ def build_report(plan: dict) -> dict:
         "headline": headline,
         "confidence": "high" if plan["llm_provider"] != "mock" else "low",
         "metrics": {
+            # Spec-shaped keys per docs/architecture.md §3.7: consumers reading
+            # the documented names get real data.
+            "pipeline_counts_by_stage": plan.get("stage_counts", {}),
+            "overdue": counts["overdue"],
+            # Additional operational rollups (unions in — the validator ignores
+            # extras, and the group-shaped counts are still the richer view).
             "pipeline_counts_by_group": counts,
             "total_tracked_people": plan["total_people"],
             "llm_provider": plan["llm_provider"],

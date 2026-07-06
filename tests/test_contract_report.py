@@ -43,6 +43,29 @@ def test_union_shape_serves_both_consumers(settings, samples_dir):
     assert report["confidence"] == "low"
 
 
+def test_metrics_include_spec_shaped_keys(settings, samples_dir):
+    """gh #12: Contract-1 metrics MUST include the spec-documented
+    `pipeline_counts_by_stage` and top-level `overdue` keys. Downstream
+    consumers reading those documented names got empty results before."""
+    report = _report(settings, samples_dir)
+    metrics = report["metrics"]
+    assert "pipeline_counts_by_stage" in metrics
+    assert isinstance(metrics["pipeline_counts_by_stage"], dict)
+    assert "overdue" in metrics
+    assert isinstance(metrics["overdue"], int)
+    # The richer group-shaped view stays for local operators.
+    assert "pipeline_counts_by_group" in metrics
+
+
+def test_recommended_crm_action_carries_approval_status():
+    """gh #12: RecommendedCRMAction must carry approval_status so it can be
+    routed through the review gate before materialization."""
+    from relationship_intel.extraction.schemas import ApprovalStatus, RecommendedCRMAction
+
+    action = RecommendedCRMAction(action="follow_up", target="Bob Smith")
+    assert action.approval_status == ApprovalStatus.proposed
+
+
 def test_validator_rejects_broken_reports(settings, samples_dir):
     report = _report(settings, samples_dir)
     broken = {k: v for k, v in report.items() if k != "findings"}

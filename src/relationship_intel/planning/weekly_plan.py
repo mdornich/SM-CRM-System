@@ -140,6 +140,20 @@ def build_plan(
         key=rank,
     )[:3]
 
+    # Stage rollup, deduped by person — feeds the Contract-1 report's
+    # spec-shaped `pipeline_counts_by_stage` metric (docs/architecture.md §3.7).
+    # top_plays overlaps with warm/hot/overdue, so iterate the non-top_plays
+    # groups and dedupe on person_name.
+    stage_counts: dict[str, int] = {}
+    seen_people: set[str] = set()
+    for name in ("hot", "overdue", "warm", "cold_retouch", "stalled", "long_term", "not_ready"):
+        for item in groups[name]:
+            if item["person_name"] in seen_people:
+                continue
+            seen_people.add(item["person_name"])
+            stage = item.get("stage") or "unknown"
+            stage_counts[stage] = stage_counts.get(stage, 0) + 1
+
     return {
         "owner": owner,
         "week_start": week_start.isoformat(),
@@ -149,6 +163,7 @@ def build_plan(
         "llm_provider": llm_provider,
         "total_people": len(people),
         "groups": groups,
+        "stage_counts": stage_counts,
     }
 
 
