@@ -286,11 +286,17 @@ def test_reviewer_cleared_stage_defensively_falls_back_to_db_stage(settings, sam
     assert stats["skipped_by_stage"] == 0
 
 
-def test_review_required_warning_not_fired_on_idempotent_resync(settings, samples_dir, caplog):
+def test_awaiting_approval_hint_not_fired_on_idempotent_resync(settings, samples_dir, caplog):
     """After a successful sync where everything's approved and pushed, a
-    second run is all hash-match skips. The 'review-required mode is on'
-    warning must NOT fire — those items ARE approved.
-    (Verified finding from /code-review round 2.)"""
+    second run is all hash-match skips. The 'awaiting approval' hint must
+    NOT fire — those items ARE approved.
+
+    Guards the round-2 defect where the hint gated on the general `skipped`
+    counter (which conflates hash-matches with unapproved items) and
+    misfired on every idempotent re-sync. Test asserts the current INFO
+    log text, not the stale WARNING wording — a future revert of the
+    counter split would surface here.
+    (Verified findings from /code-review rounds 2 and 5.)"""
     import logging
     from dataclasses import replace
 
@@ -298,8 +304,7 @@ def test_review_required_warning_not_fired_on_idempotent_resync(settings, sample
     pipeline.run_ingest(reviewed, samples_dir)
     repo = pipeline.open_repo(reviewed)
 
-    # Approve everything the ingest produced — the warning is only about the
-    # "you skipped some because they weren't approved" case.
+    # Approve everything the ingest produced.
     for item in repo.review_items():
         repo.set_review_item(item.object_type, item.local_id, "approved", item.payload)
 
@@ -307,13 +312,37 @@ def test_review_required_warning_not_fired_on_idempotent_resync(settings, sample
     first = pipeline.run_sync(reviewed, "mock")
     assert first["skipped_not_approved"] == 0
 
-    # Second sync: all hash-match skips. No warning.
+    # Second sync: all hash-match skips. No approval hint.
     caplog.clear()
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO, logger="relationship_intel.crm.sync"):
         second = pipeline.run_sync(reviewed, "mock")
 
     assert second["skipped_not_approved"] == 0
-    assert not any("review-required mode is on" in record.message for record in caplog.records)
+    assert not any("awaiting approval" in record.message for record in caplog.records)
+
+
+def test_awaiting_approval_hint_fires_when_items_are_unapproved(settings, samples_dir, caplog):
+    """Positive counterpart to the guard above — when items ARE unapproved
+    and the gate is on, the approval hint must fire so operators know
+    something is stuck. Locks in both the trigger and the log level."""
+    import logging
+    from dataclasses import replace
+
+    reviewed = replace(settings, crm_review_required=True)
+    pipeline.run_ingest(reviewed, samples_dir)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="relationship_intel.crm.sync"):
+        stats = pipeline.run_sync(reviewed, "mock")
+
+    assert stats["skipped_not_approved"] > 0
+    matches = [
+        r
+        for r in caplog.records
+        if "awaiting approval" in r.message and r.name == "relationship_intel.crm.sync"
+    ]
+    assert matches, "review-gate hint must fire when items are unapproved"
+    assert matches[0].levelno == logging.INFO
 
 
 def test_reviewer_stage_edit_to_no_opp_stage_is_filtered_for_twenty(settings, samples_dir):

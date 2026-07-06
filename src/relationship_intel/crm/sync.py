@@ -254,14 +254,19 @@ def sync_to_crm(
         stats["opportunities" if pushed else "skipped"] += 1
 
     logger.info("CRM sync (%s): %s", adapter.provider, stats)
-    # If the review gate held anything back, surface it. INFO not WARNING —
-    # this is a "here's what's still pending" hint, not an error. Earlier
-    # versions gated the message on "and pushed 0" which oscillated between
-    # false positives (idempotent re-sync) and false negatives (a note or
-    # task landed but no top-level entity). The correct semantic is simply:
-    # "review-required is on and there are unapproved items." Whether other
-    # things pushed is orthogonal — the operator still needs to know some
-    # items are waiting.
+    # If the review gate held anything back, surface it as INFO (not WARNING).
+    # Design choice, revisited across rounds 2-5 of /code-review:
+    #   - Earlier versions gated on "and nothing landed" and oscillated
+    #     between false positives (idempotent re-sync) and false negatives
+    #     (only a note/task landed). The trigger condition kept flipping.
+    #   - Fixed shape: fire whenever the gate held items back — that's what
+    #     the operator wants to know. Whether other things landed is
+    #     orthogonal.
+    #   - INFO not WARNING because the review gate WORKING as designed is
+    #     not an error condition. Ops who need alerting on a stuck backlog
+    #     should run `relationship_intel review-queue --json` on a schedule
+    #     — that surface is designed for it. A WARNING here would fire on
+    #     every legitimate use of the gate and train operators to ignore it.
     if approved_only and stats["skipped_not_approved"] > 0:
         logger.info(
             "%d review item(s) awaiting approval — approve in the review UI "
