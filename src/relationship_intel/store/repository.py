@@ -363,6 +363,14 @@ class Repository:
         reason: str | None = None,
         default_status: str = "pending",
     ) -> None:
+        """INSERT a new review item OR update label/reason of an existing one.
+
+        Deliberately DOES NOT touch `payload_json` on conflict — the review UI
+        treats the stored payload as the reviewer's authoritative view of what
+        will go to the CRM, so a rebuild after ingest must not clobber their
+        edits. Use `merge_review_item_payload` to add or refresh specific
+        payload keys (e.g. enrichment lookups) without disturbing other fields.
+        """
         row = self.conn.execute(
             "SELECT status FROM crm_review_items WHERE object_type = ? AND local_id = ?",
             (object_type, local_id),
@@ -374,10 +382,28 @@ class Repository:
             " VALUES (?,?,?,?,?,?)"
             " ON CONFLICT(object_type, local_id) DO UPDATE SET"
             " label=excluded.label,"
-            " payload_json=excluded.payload_json,"
             " reason=excluded.reason,"
             " updated_at=CURRENT_TIMESTAMP",
             (object_type, local_id, label, status, json.dumps(payload), reason),
+        )
+        self.conn.commit()
+
+    def merge_review_item_payload(self, object_type: str, local_id: int, updates: dict) -> None:
+        """Merge `updates` into the existing row's payload_json. Preserves any
+        keys not present in `updates`. No-op if the row doesn't exist."""
+        row = self.conn.execute(
+            "SELECT payload_json FROM crm_review_items WHERE object_type = ? AND local_id = ?",
+            (object_type, local_id),
+        ).fetchone()
+        if not row:
+            return
+        current = json.loads(row["payload_json"])
+        current.update(updates)
+        self.conn.execute(
+            "UPDATE crm_review_items"
+            " SET payload_json = ?, updated_at = CURRENT_TIMESTAMP"
+            " WHERE object_type = ? AND local_id = ?",
+            (json.dumps(current), object_type, local_id),
         )
         self.conn.commit()
 

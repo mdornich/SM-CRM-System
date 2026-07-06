@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from relationship_intel.config import Settings
 from relationship_intel.crm.sync import sync_to_crm
@@ -100,30 +100,34 @@ def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 876
             if parsed.path != "/":
                 self.send_error(404)
                 return
-            self._send_html(_render_page(settings))
+            query = parse_qs(parsed.query)
+            message = query.get("msg", [None])[0]
+            error = query.get("err", [None])[0]
+            self._send_html(_render_page(settings, message=message, error=error))
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib hook
             length = int(self.headers.get("content-length", "0"))
             body = self.rfile.read(length).decode("utf-8")
             form = parse_qs(body)
             parsed = urlparse(self.path)
+            back = form.get("back", [""])[0]
             try:
                 if parsed.path == "/item":
                     _handle_item(settings, form)
-                    self._redirect("/")
+                    self._redirect(_home_url(back=back))
                 elif parsed.path == "/bundle":
                     changed, sync_stats = _handle_bundle(settings, form)
-                    message = f"Updated {changed} review items."
+                    msg = f"Updated {changed} review items."
                     if sync_stats is not None:
-                        message += f" Pushed to Twenty: {sync_stats}"
-                    self._send_html(_render_page(settings, message=message))
+                        msg += f" Pushed to Twenty: {sync_stats}"
+                    self._redirect(_home_url(msg=msg, back=back))
                 elif parsed.path == "/sync":
                     stats = _handle_sync(settings)
-                    self._send_html(_render_page(settings, message=f"Synced: {stats}"))
+                    self._redirect(_home_url(msg=f"Synced: {stats}"))
                 else:
                     self.send_error(404)
             except Exception as exc:  # noqa: BLE001 - local operator UI
-                self._send_html(_render_page(settings, error=str(exc)), status=400)
+                self._redirect(_home_url(err=str(exc), back=back))
 
         def log_message(self, fmt: str, *args) -> None:
             return
@@ -144,6 +148,23 @@ def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 876
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Review UI running at http://{host}:{port}/")
     server.serve_forever()
+
+
+def _home_url(*, msg: str | None = None, err: str | None = None, back: str = "") -> str:
+    """Build a "back to home" URL that also survives across POST redirects:
+    - `msg` / `err` land in query params so the next GET can render a flash.
+    - `back` becomes the URL fragment so the browser scrolls back to the
+      candidate the operator was editing (gh #17 UX bug — save used to
+      snap the page to the top).
+    """
+    query: list[str] = []
+    if msg:
+        query.append(f"msg={quote(msg)}")
+    if err:
+        query.append(f"err={quote(err)}")
+    tail = f"?{'&'.join(query)}" if query else ""
+    fragment = f"#{quote(back)}" if back else ""
+    return f"/{tail}{fragment}"
 
 
 def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
@@ -339,8 +360,9 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
     crm_preview = _render_crm_preview(review_items)
     evidence = _render_evidence(person.evidence, person.transcripts)
     existing_badge = _render_existing_badge(person_item, company_item)
+    anchor = f"candidate-person-{person.id}"
     fields = "\n".join(
-        _render_review_item(item, compact=item.object_type in {"person", "company"})
+        _render_review_item(item, back=anchor, compact=item.object_type in {"person", "company"})
         for item in review_items
     )
     bundle_inputs = "\n".join(
@@ -348,7 +370,7 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
         for item in review_items
     )
 
-    return f"""<article class="candidate">
+    return f"""<article class="candidate" id="{anchor}">
   <div class="candidate-main">
     <div class="candidate-id">
       <h3>{html.escape(person.name)}</h3>
@@ -378,6 +400,7 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
       {crm_preview}
       <form class="bundle-actions" method="post" action="/bundle">
         {bundle_inputs}
+        <input type="hidden" name="back" value="{anchor}">
         <button class="primary" name="status" value="approved" type="submit">
           Approve &amp; push to Twenty
         </button>
@@ -394,8 +417,9 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
 
 
 def _render_standalone_company(item: CRMReviewItem, company) -> str:
+    anchor = f"candidate-company-{company.id}"
     summary = _fact("Industry", company.industry) + _fact("Domain", company.domain)
-    return f"""<article class="candidate slim">
+    return f"""<article class="candidate slim" id="{anchor}">
   <div class="candidate-main">
     <div class="candidate-id">
       <h3>{html.escape(company.name)}</h3>
@@ -404,12 +428,13 @@ def _render_standalone_company(item: CRMReviewItem, company) -> str:
     <div class="candidate-status">{_status_pill(item.status)}</div>
   </div>
   <dl class="facts">{summary}</dl>
-  {_render_review_item(item, compact=True)}
+  {_render_review_item(item, back=anchor, compact=True)}
 </article>"""
 
 
 def _render_standalone_opportunity(item: CRMReviewItem, opp) -> str:
-    return f"""<article class="candidate slim">
+    anchor = f"candidate-opportunity-{opp.id}"
+    return f"""<article class="candidate slim" id="{anchor}">
   <div class="candidate-main">
     <div class="candidate-id">
       <h3>{html.escape(opp.name)}</h3>
@@ -417,7 +442,7 @@ def _render_standalone_opportunity(item: CRMReviewItem, opp) -> str:
     </div>
     <div class="candidate-status">{_status_pill(item.status)}</div>
   </div>
-  {_render_review_item(item)}
+  {_render_review_item(item, back=anchor)}
 </article>"""
 
 
@@ -503,7 +528,9 @@ def _render_crm_preview(items: list[CRMReviewItem]) -> str:
     return '<ul class="write-preview">' + "".join(rows) + "</ul>"
 
 
-def _render_review_item(item: CRMReviewItem, compact: bool = False) -> str:
+def _render_review_item(
+    item: CRMReviewItem, *, back: str | None = None, compact: bool = False
+) -> str:
     status_options = "\n".join(
         f'<option value="{status}" {"selected" if status == item.status else ""}>'
         f"{html.escape(STATUS_LABELS[status])}</option>"
@@ -512,9 +539,11 @@ def _render_review_item(item: CRMReviewItem, compact: bool = False) -> str:
     fields = _render_payload_fields(item.payload, compact=compact)
     title = CRM_OBJECT_LABELS.get(item.object_type, item.object_type)
     reason = f'<p class="reason">{html.escape(item.reason)}</p>' if item.reason else ""
+    back_input = f'<input type="hidden" name="back" value="{html.escape(back)}">' if back else ""
     return f"""<form class="review-item" method="post" action="/item">
   <input type="hidden" name="object_type" value="{html.escape(item.object_type)}">
   <input type="hidden" name="local_id" value="{item.local_id}">
+  {back_input}
   <div class="review-item-head">
     <div>
       <h4>{html.escape(title)}</h4>

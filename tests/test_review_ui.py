@@ -89,6 +89,73 @@ def test_existing_crm_contact_surfaces_as_followup_badge_and_skips_create(settin
     assert bobs[0]["id"] == seed_ref.crm_id
 
 
+def test_user_payload_edits_survive_a_rebuild(settings, samples_dir):
+    """Regression: `Save contact` used to look like a no-op because
+    `rebuild_review_queue` (which fires on every page render) blew away
+    the payload with fresh DB values. Now upsert_review_item preserves
+    payload_json on conflict, and the reviewer's edit persists across
+    rebuilds."""
+    from relationship_intel.review import _handle_item
+
+    pipeline.run_ingest(settings, samples_dir)
+    repo = pipeline.open_repo(settings)
+    bob = next(person for person in repo.people_records() if person.name == "Bob Smith")
+
+    # Reviewer types "bob@newcompany.com" into the Email field of the
+    # contact form and hits Save contact.
+    _handle_item(
+        settings,
+        {
+            "object_type": ["person"],
+            "local_id": [str(bob.id)],
+            "status": ["pending"],
+            "field": ["name", "email", "title"],
+            "type__name": ["str"],
+            "value__name": [bob.name],
+            "type__email": ["str"],
+            "value__email": ["bob@newcompany.com"],
+            "type__title": ["str"],
+            "value__title": [bob.title or ""],
+        },
+    )
+
+    # Any subsequent read of the page triggers rebuild_review_queue —
+    # the edited email must NOT be reset to bob's stored email.
+    _render_page(settings)
+    reloaded = pipeline.open_repo(settings).review_item("person", bob.id)
+    assert reloaded.payload["email"] == "bob@newcompany.com"
+
+
+def test_form_carries_back_anchor_so_save_stays_on_the_bundle(settings, samples_dir):
+    """Regression: Save used to redirect to `/`, snapping the page to the
+    top and losing the reviewer's place. Each candidate bundle now has an
+    `id="candidate-…-<id>"` anchor and every form inside it carries a
+    hidden `back` field pointing to that anchor, so the post-save 303
+    lands the browser back at the bundle the reviewer was editing."""
+    pipeline.run_ingest(settings, samples_dir)
+    repo = pipeline.open_repo(settings)
+    bob = next(person for person in repo.people_records() if person.name == "Bob Smith")
+
+    html = _render_page(settings)
+    anchor = f"candidate-person-{bob.id}"
+    assert f'id="{anchor}"' in html
+    assert f'<input type="hidden" name="back" value="{anchor}">' in html
+
+
+def test_home_url_carries_flash_and_anchor():
+    """The redirect URL for Save must include the anchor as a fragment
+    (so the browser scrolls to the bundle) and messages as query params
+    (so the next GET can render them)."""
+    from relationship_intel.review import _home_url
+
+    assert _home_url(back="candidate-person-42") == "/#candidate-person-42"
+    assert _home_url(msg="Updated 3 items", back="candidate-person-42") == (
+        "/?msg=Updated%203%20items#candidate-person-42"
+    )
+    assert _home_url(err="boom") == "/?err=boom"
+    assert _home_url() == "/"
+
+
 def test_bundle_approve_rolls_back_status_when_sync_raises(settings, samples_dir, monkeypatch):
     """A failed CRM push must not leave the review_items marked 'approved' —
     otherwise the next click silently pushes what this one couldn't (verified

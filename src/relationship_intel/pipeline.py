@@ -367,16 +367,28 @@ def _apply_existing_crm_ref(
 ) -> None:
     """Populate `payload['existing_crm_ref']` when the entity already exists
     in the CRM (gh #15). Uses the prior review item's cached ref when
-    available so we don't spam the CRM on every review-UI page render."""
+    available so we don't spam the CRM on every review-UI page render.
+
+    `upsert_review_item` no longer overwrites payload_json on conflict (so
+    reviewer edits survive rebuild), which means enrichment done here won't
+    hit disk for an EXISTING row unless we also merge it in explicitly.
+    """
     if adapter is None:
         return
     prior = repo.review_item(object_type, local_id)
     if prior and prior.payload.get("existing_crm_ref") is not None:
+        # Cache hit — copy into current payload so a new-row insert still
+        # writes the enrichment as part of its initial payload.
         payload["existing_crm_ref"] = prior.payload["existing_crm_ref"]
         return
     existing = lookup_fn(adapter, payload)
-    if existing:
-        payload["existing_crm_ref"] = existing
+    if not existing:
+        return
+    payload["existing_crm_ref"] = existing
+    if prior is not None:
+        # Existing row — upsert will preserve payload_json, so persist the
+        # enrichment lookup explicitly rather than let it evaporate.
+        repo.merge_review_item_payload(object_type, local_id, {"existing_crm_ref": existing})
 
 
 def _lookup_existing_person(adapter: CRMAdapter, payload: dict) -> dict | None:
