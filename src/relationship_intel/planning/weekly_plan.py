@@ -11,6 +11,7 @@ descending; stalled = no interaction in stall_threshold_days."""
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 
 from relationship_intel.extraction.schemas import PROSPECT_LEAD_TYPES
@@ -79,8 +80,12 @@ def build_plan(
         cadence_days = _CADENCE_DAYS.get(profile.get("recommended_cadence") or "", 30)
 
         evidence = profile.get("evidence_snippets") or rec.evidence
+        # Display text for the evidence link — just the meeting date. The
+        # person's name is already in the section heading, and the raw
+        # transcript filename is machine-language noise in a human doc.
         transcript_links = [
-            wikilink(transcript_note_name(d, t, h), t) for d, t, h in rec.transcripts
+            wikilink(transcript_note_name(d, t, h), _evidence_display(d, t))
+            for d, t, h in rec.transcripts
         ]
         # Stable per-(person, week) item id for the plan-feedback loop
         # (gh #16). Same person in the same week = same id, so feedback
@@ -174,11 +179,35 @@ def build_plan(
     }
 
 
+_DATE_IN_TITLE = re.compile(r"(\d{4})[-_/](\d{2})[-_/](\d{2})")
+
+
+def _evidence_display(date_str: str | None, title: str) -> str:
+    """Human-facing label for a wikilink to a transcript note.
+
+    Priority: (1) the meeting_date the intake resolved, (2) a date pattern
+    inside the title (Gemini/Meet filenames often carry `YYYY_MM_DD`),
+    (3) a generic "meeting notes" fallback. Anything is better than
+    dumping the raw filename slug into the plan.
+    """
+    if date_str:
+        return f"meeting on {date_str}"
+    match = _DATE_IN_TITLE.search(title)
+    if match:
+        y, m, d = match.groups()
+        return f"meeting on {y}-{m}-{d}"
+    return "meeting notes"
+
+
 def _crm_link(repo: Repository, person_id: int) -> str | None:
+    """Return a clickable URL to the CRM record, or None when we only have
+    an opaque `provider:UUID` fallback (which is machine-language noise in
+    the plan Markdown). The JSON export still carries the raw CRM id via
+    the sync-state tables, so downstream automation isn't losing anything."""
     row = repo.any_crm_ref("person", person_id)
     if not row:
         return None
-    return row["url"] or f"{row['provider']}:{row['crm_id']}"
+    return row["url"] or None
 
 
 # -- renderings -----------------------------------------------------------------

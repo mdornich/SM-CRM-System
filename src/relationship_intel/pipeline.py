@@ -447,11 +447,13 @@ def run_weekly_plan(
     repo.save_plan(owner, plan["week_start"], weekly_plan.to_json(plan))
 
     note_name = f"{plan['week_label']}-{slugify(owner)}-succession-plan"
+    # Frontmatter kept intentionally small — only fields James would actually
+    # query on in Obsidian's properties panel or via Dataview. `generated_by`
+    # and `llm_provider` were noise for a human reader; the writer still
+    # appends `content_hash` for its own idempotency check.
     fm = [
         ("type", "weekly_plan"),
-        ("generated_by", templates.GENERATED_BY),
         ("review_status", "unreviewed"),
-        ("llm_provider", plan["llm_provider"]),
         ("owner", owner),
         ("week_start", plan["week_start"]),
         ("week_end", plan["week_end"]),
