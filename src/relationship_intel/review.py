@@ -103,7 +103,8 @@ def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 876
             query = parse_qs(parsed.query)
             message = query.get("msg", [None])[0]
             error = query.get("err", [None])[0]
-            self._send_html(_render_page(settings, message=message, error=error))
+            expand = query.get("expand", [None])[0]
+            self._send_html(_render_page(settings, message=message, error=error, expand=expand))
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib hook
             length = int(self.headers.get("content-length", "0"))
@@ -114,12 +115,16 @@ def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 876
             try:
                 if parsed.path == "/item":
                     _handle_item(settings, form)
-                    self._redirect(_home_url(back=back))
+                    # Individual field save → keep the edit panel open so
+                    # the reviewer can keep editing without hunting for it.
+                    self._redirect(_home_url(back=back, expand=True))
                 elif parsed.path == "/bundle":
                     changed, sync_stats = _handle_bundle(settings, form)
                     msg = f"Updated {changed} review items."
                     if sync_stats is not None:
                         msg += f" Pushed to Twenty: {sync_stats}"
+                    # Bundle action closes the bundle intentionally — the
+                    # reviewer is done with it and will move on.
                     self._redirect(_home_url(msg=msg, back=back))
                 elif parsed.path == "/sync":
                     stats = _handle_sync(settings)
@@ -150,18 +155,30 @@ def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 876
     server.serve_forever()
 
 
-def _home_url(*, msg: str | None = None, err: str | None = None, back: str = "") -> str:
+def _home_url(
+    *,
+    msg: str | None = None,
+    err: str | None = None,
+    back: str = "",
+    expand: bool = False,
+) -> str:
     """Build a "back to home" URL that also survives across POST redirects:
     - `msg` / `err` land in query params so the next GET can render a flash.
     - `back` becomes the URL fragment so the browser scrolls back to the
       candidate the operator was editing (gh #17 UX bug — save used to
       snap the page to the top).
+    - `expand=True` also emits `?expand=<back>` so the render side can
+      re-open the `<details>` panel the operator was mid-edit inside.
+      Without this, the scroll is right but the panel is collapsed and
+      it looks like the edit dropped the reviewer back to the main view.
     """
     query: list[str] = []
     if msg:
         query.append(f"msg={quote(msg)}")
     if err:
         query.append(f"err={quote(err)}")
+    if expand and back:
+        query.append(f"expand={quote(back)}")
     tail = f"?{'&'.join(query)}" if query else ""
     fragment = f"#{quote(back)}" if back else ""
     return f"/{tail}{fragment}"
@@ -248,7 +265,12 @@ def _one(form: dict[str, list[str]], key: str) -> str:
     return values[0]
 
 
-def _render_page(settings: Settings, message: str | None = None, error: str | None = None) -> str:
+def _render_page(
+    settings: Settings,
+    message: str | None = None,
+    error: str | None = None,
+    expand: str | None = None,
+) -> str:
     repo = open_repo(settings)
     rebuild_review_queue(repo, adapter=try_make_adapter(settings))
     items = repo.review_items()
@@ -268,17 +290,18 @@ def _render_page(settings: Settings, message: str | None = None, error: str | No
             item_map,
             companies,
             opportunities_by_person.get(person.id, []),
+            expand=expand,
         )
         for person in people
         if ("person", person.id) in item_map
     )
     standalone_orgs = "\n".join(
-        _render_standalone_company(item_map[("company", company.id)], company)
+        _render_standalone_company(item_map[("company", company.id)], company, expand=expand)
         for company in companies.values()
         if company.id not in linked_company_ids and ("company", company.id) in item_map
     )
     unlinked_opps = "\n".join(
-        _render_standalone_opportunity(item_map[("opportunity", opp.id)], opp)
+        _render_standalone_opportunity(item_map[("opportunity", opp.id)], opp, expand=expand)
         for opp in opportunities
         if opp.person_id is None and ("opportunity", opp.id) in item_map
     )
@@ -335,7 +358,9 @@ def _render_page(settings: Settings, message: str | None = None, error: str | No
 </html>"""
 
 
-def _render_person_bundle(person, item_map: dict, companies: dict, opportunities: list) -> str:
+def _render_person_bundle(
+    person, item_map: dict, companies: dict, opportunities: list, *, expand: str | None = None
+) -> str:
     person_item = item_map.get(("person", person.id))
     if not person_item:
         return ""
@@ -369,6 +394,7 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
         f'<input type="hidden" name="item" value="{html.escape(item.object_type)}:{item.local_id}">'
         for item in review_items
     )
+    details_attr = " open" if expand == anchor else ""
 
     return f"""<article class="candidate" id="{anchor}">
   <div class="candidate-main">
@@ -409,16 +435,20 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
       </form>
     </aside>
   </div>
-  <details class="edit-panel">
+  <details class="edit-panel"{details_attr}>
     <summary>Edit proposed fields</summary>
     <div class="review-items">{fields}</div>
   </details>
 </article>"""
 
 
-def _render_standalone_company(item: CRMReviewItem, company) -> str:
+def _render_standalone_company(item: CRMReviewItem, company, *, expand: str | None = None) -> str:
     anchor = f"candidate-company-{company.id}"
     summary = _fact("Industry", company.industry) + _fact("Domain", company.domain)
+    # Standalone bundles don't have a details wrapper — the review form is
+    # always visible — so `expand` is a no-op here. Kept in the signature so
+    # the caller can pass it uniformly.
+    _ = expand
     return f"""<article class="candidate slim" id="{anchor}">
   <div class="candidate-main">
     <div class="candidate-id">
@@ -432,8 +462,9 @@ def _render_standalone_company(item: CRMReviewItem, company) -> str:
 </article>"""
 
 
-def _render_standalone_opportunity(item: CRMReviewItem, opp) -> str:
+def _render_standalone_opportunity(item: CRMReviewItem, opp, *, expand: str | None = None) -> str:
     anchor = f"candidate-opportunity-{opp.id}"
+    _ = expand  # Standalone opportunity has no collapsible panel.
     return f"""<article class="candidate slim" id="{anchor}">
   <div class="candidate-main">
     <div class="candidate-id">

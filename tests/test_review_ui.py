@@ -154,6 +154,30 @@ def test_home_url_carries_flash_and_anchor():
     )
     assert _home_url(err="boom") == "/?err=boom"
     assert _home_url() == "/"
+    # `expand=True` also emits the query param so the render can re-open
+    # the collapsed <details> panel the reviewer was editing inside.
+    assert _home_url(back="candidate-person-42", expand=True) == (
+        "/?expand=candidate-person-42#candidate-person-42"
+    )
+
+
+def test_expand_reopens_edit_panel_for_the_edited_bundle(settings, samples_dir):
+    """Regression: after Save individual field, the edit panel used to
+    collapse itself so the operator was staring at the summary view again.
+    Fix: `expand=<anchor>` query param puts `<details open>` on the
+    matching bundle's edit panel."""
+    from relationship_intel.review import _render_page
+
+    pipeline.run_ingest(settings, samples_dir)
+    repo = pipeline.open_repo(settings)
+    bob = next(person for person in repo.people_records() if person.name == "Bob Smith")
+
+    default_html = _render_page(settings)
+    # Default render — the details element is closed for every candidate.
+    assert '<details class="edit-panel" open>' not in default_html
+
+    expanded_html = _render_page(settings, expand=f"candidate-person-{bob.id}")
+    assert '<details class="edit-panel" open>' in expanded_html
 
 
 def test_bundle_approve_rolls_back_status_when_sync_raises(settings, samples_dir, monkeypatch):
