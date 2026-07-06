@@ -10,6 +10,7 @@ import json
 import logging
 
 from relationship_intel.crm.base import CRMAdapter, CRMRef, NotePayload, TaskPayload
+from relationship_intel.crm.twenty_adapter import NO_OPP_STAGES
 from relationship_intel.store.repository import Repository
 from relationship_intel.util.hashing import short_hash
 
@@ -47,7 +48,16 @@ def sync_to_crm(
     *,
     approved_only: bool = False,
 ) -> dict:
-    stats = {"companies": 0, "people": 0, "opportunities": 0, "notes": 0, "tasks": 0, "skipped": 0}
+    stats = {
+        "companies": 0,
+        "people": 0,
+        "opportunities": 0,
+        "notes": 0,
+        "tasks": 0,
+        "skipped": 0,
+        "skipped_by_stage": 0,
+    }
+    twenty_provider = adapter.provider == "twenty"
     adapter.ensure_schema()
 
     approved_companies = repo.approved_review_ids("company") if approved_only else None
@@ -186,6 +196,14 @@ def sync_to_crm(
     for opp in repo.opportunity_records():
         if approved_opps is not None and opp.id not in approved_opps:
             stats["skipped"] += 1
+            continue
+        # Twenty's default board has no Lost/Stalled/Not-fit column; skip these
+        # rather than crash the sync. Mock adapter accepts all stages.
+        if twenty_provider and opp.stage in NO_OPP_STAGES:
+            stats["skipped_by_stage"] += 1
+            logger.info(
+                "twenty skip opportunity id=%s stage=%s (no Twenty column)", opp.id, opp.stage
+            )
             continue
         review = repo.review_item("opportunity", opp.id)
         payload = (

@@ -220,6 +220,7 @@ def to_markdown(plan: dict) -> str:
     lines += _render_group(
         "Needs Review", g["needs_review"], "no identity flags — entity resolution is clean"
     )
+    lines += _render_time_blocks(g)
     lines += [
         "## Risks",
         "",
@@ -228,6 +229,27 @@ def to_markdown(plan: dict) -> str:
         "",
     ]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_time_blocks(groups: dict[str, list[dict]]) -> list[str]:
+    """Deterministic time-block heuristic — same input, same output. Owner uses
+    these as prompts, not commitments."""
+    blocks: list[tuple[str, int, str]] = [
+        ("Mon AM — plan the week", len(groups["top_plays"]), "top plays"),
+        ("Tue AM — warm follow-ups", len(groups["warm"]), "warm follow-ups"),
+        ("Wed AM — overdue cleanup", len(groups["overdue"]), "overdue items"),
+        ("Thu PM — cold retouches", len(groups["cold_retouch"]), "cold retouches"),
+        ("Fri AM — referral / partner nurture", len(groups["referral_nurture"]), "referrals"),
+    ]
+    lines = ["## Suggested Time Blocks", ""]
+    if not any(count for _, count, _ in blocks):
+        lines += ["_No items to block — light week._", ""]
+        return lines
+    for label, count, kind in blocks:
+        if count:
+            lines.append(f"- **{label}** — {count} {kind}")
+    lines.append("")
+    return lines
 
 
 def to_json(plan: dict) -> str:

@@ -44,6 +44,7 @@ def test_review_required_sync_only_pushes_approved_items(settings, samples_dir):
         "notes": 0,
         "tasks": 0,
         "skipped": 8,
+        "skipped_by_stage": 0,
     }
 
     repo = pipeline.open_repo(reviewed)

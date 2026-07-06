@@ -149,8 +149,10 @@ def _target_link(ref: CRMRef) -> dict:
     return {field: ref.crm_id}
 
 
-# Spec stage vocabulary -> Twenty default pipeline stages. Unmapped spec stages
-# (not_fit, stalled, closed_lost) intentionally do not create opportunities.
+# Spec stage vocabulary -> Twenty default pipeline stages. Twenty's default board
+# has no Lost / Stalled / Not-fit column, so those stages do not create Twenty
+# opportunities — they're filtered upstream in sync.py (see NO_OPP_STAGES) and
+# reported under stats["skipped_by_stage"] rather than crashing the sync.
 STAGE_MAP = {
     "new": "NEW",
     "nurture": "NEW",
@@ -159,6 +161,7 @@ STAGE_MAP = {
     "active_opportunity": "PROPOSAL",
     "closed_won": "CUSTOMER",
 }
+NO_OPP_STAGES = frozenset({"not_fit", "stalled", "closed_lost"})
 
 
 class TwentyCRMAdapter(CRMAdapter):
@@ -168,7 +171,8 @@ class TwentyCRMAdapter(CRMAdapter):
         if not api_key:
             raise NotConfiguredError(
                 "TWENTY_API_KEY is not set. Create one in Twenty at Settings -> Developers "
-                "(local fork: http://localhost:3001) and export it; see docs/twenty-setup.md."
+                "(local fork frontend: http://localhost:3001; backend API: http://localhost:3002) "
+                "and export it; see docs/twenty-setup.md."
             )
         self.base_url = api_url.rstrip("/") + "/rest"
         self.client = httpx.Client(
@@ -267,11 +271,17 @@ class TwentyCRMAdapter(CRMAdapter):
         return self._ref("company", self._create("companies", "company", body))
 
     def create_or_update_opportunity(self, opportunity: dict) -> CRMRef:
-        stage = STAGE_MAP.get(opportunity.get("stage", "new"))
+        stage_key = opportunity.get("stage", "new")
+        if stage_key in NO_OPP_STAGES:
+            # Filtered upstream in sync.py; this is a defensive guard for direct callers.
+            raise ValueError(
+                f"Stage {stage_key!r} does not create a Twenty opportunity — "
+                "sync.py must filter NO_OPP_STAGES before calling."
+            )
+        stage = STAGE_MAP.get(stage_key)
         if stage is None:
             raise ValueError(
-                f"Spec stage {opportunity.get('stage')!r} does not map to a Twenty stage; "
-                "unmapped stages intentionally do not create opportunities."
+                f"Unknown spec stage {stage_key!r}; extend STAGE_MAP or add to NO_OPP_STAGES."
             )
         safe_name = _filter_safe(opportunity["name"])
         existing = self._find_one("opportunities", f"name[eq]:{safe_name}") if safe_name else None

@@ -26,7 +26,7 @@ class Settings:
     obsidian_mode: str = "plain"
     store_raw_transcripts: bool = True
     crm_provider: str = "mock"
-    crm_review_required: bool = False
+    crm_review_required: bool = True
     twenty_api_url: str = "http://localhost:3002"
     twenty_api_key: str = ""
     granola_api_key: str = ""
@@ -58,7 +58,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         obsidian_mode=env.get("OBSIDIAN_MODE", "plain").strip() or "plain",
         store_raw_transcripts=_bool(env.get("STORE_RAW_TRANSCRIPTS"), True),
         crm_provider=env.get("CRM_PROVIDER", "mock").strip() or "mock",
-        crm_review_required=_bool(env.get("CRM_REVIEW_REQUIRED"), False),
+        crm_review_required=_bool(env.get("CRM_REVIEW_REQUIRED"), True),
         twenty_api_url=env.get("TWENTY_API_URL", "http://localhost:3002").strip()
         or "http://localhost:3002",
         twenty_api_key=env.get("TWENTY_API_KEY", ""),

@@ -107,10 +107,11 @@ def serve_review_ui(settings: Settings, host: str = "127.0.0.1", port: int = 876
                     _handle_item(settings, form)
                     self._redirect("/")
                 elif parsed.path == "/bundle":
-                    changed = _handle_bundle(settings, form)
-                    self._send_html(
-                        _render_page(settings, message=f"Updated {changed} review items.")
-                    )
+                    changed, sync_stats = _handle_bundle(settings, form)
+                    message = f"Updated {changed} review items."
+                    if sync_stats is not None:
+                        message += f" Pushed to Twenty: {sync_stats}"
+                    self._send_html(_render_page(settings, message=message))
                 elif parsed.path == "/sync":
                     stats = _handle_sync(settings)
                     self._send_html(_render_page(settings, message=f"Synced: {stats}"))
@@ -151,10 +152,14 @@ def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
     repo.set_review_item(object_type, local_id, status, payload)
 
 
-def _handle_bundle(settings: Settings, form: dict[str, list[str]]) -> int:
+def _handle_bundle(settings: Settings, form: dict[str, list[str]]) -> tuple[int, dict | None]:
     status = _one(form, "status")
     if status not in FINAL_STATUSES:
         raise ValueError(f"Unsupported bundle status: {status}")
+    # Push-on-approve: any Approve bundle click also fires sync to CRM for the
+    # newly-approved subset (see docs/architecture.md §Human Approval; Option 1
+    # of gh issue #6). Rejected / vault-only bundles never push.
+    push_on_approve = _one_or_default(form, "push", "on") in {"on", "true", "1"}
     repo = open_repo(settings)
     changed = 0
     for raw in form.get("item", []):
@@ -165,7 +170,15 @@ def _handle_bundle(settings: Settings, form: dict[str, list[str]]) -> int:
             continue
         repo.set_review_item(object_type, local_id, status, item.payload)
         changed += 1
-    return changed
+    sync_stats: dict | None = None
+    if status == "approved" and push_on_approve and changed > 0:
+        sync_stats = _handle_sync(settings)
+    return changed, sync_stats
+
+
+def _one_or_default(form: dict[str, list[str]], key: str, default: str) -> str:
+    values = form.get(key)
+    return values[0] if values else default
 
 
 def _handle_sync(settings: Settings) -> dict:
@@ -330,7 +343,9 @@ def _render_person_bundle(person, item_map: dict, companies: dict, opportunities
       {crm_preview}
       <form class="bundle-actions" method="post" action="/bundle">
         {bundle_inputs}
-        <button name="status" value="approved" type="submit">Approve all</button>
+        <button class="primary" name="status" value="approved" type="submit">
+          Approve &amp; push to Twenty
+        </button>
         <button name="status" value="obsidian_only" type="submit">Vault only</button>
         <button name="status" value="rejected" type="submit">Reject all</button>
       </form>

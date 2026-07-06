@@ -99,7 +99,7 @@ def run_ingest_source(
         # still writes notes for the transcripts that DID land (they are
         # registered and would be skipped as duplicates on the retry run).
         _write_transcript_notes(repo, writer, processed, settings)
-        _write_entity_notes(repo, writer, settings.llm_provider)
+        _write_entity_notes(repo, writer, settings.llm_provider, settings.default_owner)
         rebuild_review_queue(repo)
     return stats
 
@@ -177,16 +177,21 @@ def _write_transcript_notes(
         writer.write_note("transcripts", name, fm, managed)
 
 
-def _write_entity_notes(repo: Repository, writer: VaultWriter, llm_provider: str) -> None:
+def _write_entity_notes(
+    repo: Repository,
+    writer: VaultWriter,
+    llm_provider: str,
+    default_owner: str | None = None,
+) -> None:
     people = repo.people_records()
     companies = repo.company_records()
     opportunities = repo.opportunity_records()
 
     for rec in people:
-        name, fm, managed = templates.person_note(rec, llm_provider)
+        name, fm, managed = templates.person_note(rec, llm_provider, default_owner)
         writer.write_note("people", name, fm, managed)
     for rec in companies:
-        name, fm, managed = templates.company_note(rec, llm_provider)
+        name, fm, managed = templates.company_note(rec, llm_provider, default_owner)
         writer.write_note("companies", name, fm, managed)
     for rec in opportunities:
         name, fm, managed = templates.opportunity_note(rec, llm_provider)

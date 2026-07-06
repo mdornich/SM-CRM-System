@@ -498,6 +498,23 @@ class Repository:
     def company_records(self) -> list[CompanyRecord]:
         person_slugs = self.person_slugs()
         company_slugs = self.company_slugs()
+        # Slugs for opportunity links — build once per call, not per company.
+        opp_rows_all = self.conn.execute(
+            "SELECT id, name FROM opportunities ORDER BY id"
+        ).fetchall()
+        opp_slugs = assign_slugs([(r["id"], r["name"]) for r in opp_rows_all])
+        # Stage precedence: highest-priority linked opportunity wins the company card FM.
+        stage_rank = {
+            "active_opportunity": 6,
+            "qualified": 5,
+            "discovery": 4,
+            "nurture": 3,
+            "new": 2,
+            "stalled": 1,
+            "closed_won": 1,
+            "closed_lost": 0,
+            "not_fit": 0,
+        }
         records = []
         for row in self.conn.execute("SELECT * FROM companies ORDER BY id").fetchall():
             people = [
@@ -507,6 +524,37 @@ class Repository:
                     (row["id"],),
                 ).fetchall()
             ]
+            opp_rows = self.conn.execute(
+                "SELECT id, name, stage, owner FROM opportunities WHERE company_id = ? ORDER BY id",
+                (row["id"],),
+            ).fetchall()
+            opportunities = [(opp_slugs[o["id"]], o["name"], o["stage"]) for o in opp_rows]
+            company_stage: str | None = None
+            company_owner: str | None = None
+            if opp_rows:
+                best = max(opp_rows, key=lambda o: stage_rank.get(o["stage"], 0))
+                company_stage = best["stage"]
+                for o in opp_rows:
+                    if o["owner"]:
+                        company_owner = o["owner"]
+                        break
+            evidence: list[str] = []
+            transcripts: list[tuple[str | None, str, str]] = []
+            seen_hashes: set[str] = set()
+            for i_row in self.conn.execute(
+                "SELECT i.evidence_json, t.title, t.meeting_date, t.transcript_hash"
+                " FROM interactions i"
+                " JOIN people p ON p.id = i.person_id"
+                " JOIN transcripts t ON t.id = i.transcript_id"
+                " WHERE p.company_id = ? ORDER BY i.id",
+                (row["id"],),
+            ).fetchall():
+                evidence.extend(json.loads(i_row["evidence_json"]))
+                if i_row["transcript_hash"] not in seen_hashes:
+                    transcripts.append(
+                        (i_row["meeting_date"], i_row["title"], i_row["transcript_hash"])
+                    )
+                    seen_hashes.add(i_row["transcript_hash"])
             records.append(
                 CompanyRecord(
                     id=row["id"],
@@ -518,6 +566,11 @@ class Repository:
                     ownership_context=row["ownership_context"],
                     slug=company_slugs[row["id"]],
                     people=people,
+                    opportunities=opportunities,
+                    stage=company_stage,
+                    owner=company_owner,
+                    evidence=evidence,
+                    transcripts=transcripts,
                 )
             )
         return records
@@ -533,6 +586,15 @@ class Repository:
         opp_slugs = assign_slugs([(r["id"], r["name"]) for r in rows])
         records = []
         for row in rows:
+            profile: dict = {}
+            if row["person_id"] is not None:
+                profile_row = self.conn.execute(
+                    "SELECT profile_json FROM lead_profiles WHERE person_id = ?"
+                    " ORDER BY id DESC LIMIT 1",
+                    (row["person_id"],),
+                ).fetchone()
+                if profile_row:
+                    profile = json.loads(profile_row["profile_json"])
             records.append(
                 OpportunityRecord(
                     id=row["id"],
@@ -552,6 +614,13 @@ class Repository:
                     slug=opp_slugs[row["id"]],
                     person_slug=person_slugs.get(row["person_id"]),
                     company_slug=company_slugs.get(row["company_id"]),
+                    evidence=list(profile.get("evidence_snippets") or []),
+                    risks=list(profile.get("risks") or []),
+                    objections=list(profile.get("objections") or []),
+                    pain_points=list(profile.get("pain_points") or []),
+                    stated_goals=list(profile.get("stated_goals") or []),
+                    business_owner_signal=profile.get("business_owner_signal"),
+                    exit_or_transition_signal=profile.get("exit_or_transition_signal"),
                 )
             )
         return records

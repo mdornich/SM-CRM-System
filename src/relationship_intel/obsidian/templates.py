@@ -94,7 +94,9 @@ def transcript_note(
     return name, fm, managed
 
 
-def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[str, object]], str]:
+def person_note(
+    rec: PersonRecord, llm_provider: str, default_owner: str | None = None
+) -> tuple[str, list[tuple[str, object]], str]:
     profile = rec.profile or {}
     fm = _base_frontmatter("person", llm_provider) + [
         ("name", rec.name),
@@ -102,6 +104,7 @@ def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[s
         ("company", rec.company_name),
         ("lead_type", profile.get("lead_type")),
         ("stage", profile.get("stage")),
+        ("owner", default_owner),
         ("confidence", profile.get("confidence")),
         ("identity_confidence", rec.identity_confidence),
         ("needs_review", rec.needs_review),
@@ -165,14 +168,24 @@ def person_note(rec: PersonRecord, llm_provider: str) -> tuple[str, list[tuple[s
 
 
 def company_note(
-    rec: CompanyRecord, llm_provider: str
+    rec: CompanyRecord, llm_provider: str, default_owner: str | None = None
 ) -> tuple[str, list[tuple[str, object]], str]:
+    owner = rec.owner or default_owner
     fm = _base_frontmatter("company", llm_provider) + [
         ("name", rec.name),
         ("industry", rec.industry),
         ("location", rec.location),
+        ("stage", rec.stage),
+        ("owner", owner),
         ("crm_id", None),
     ]
+    opportunity_links = bullets(
+        [f"{wikilink(slug, name)} — {stage}" for slug, name, stage in rec.opportunities]
+    ) or ["_none_"]
+    evidence_bullets = bullets([f'"{snippet}"' for snippet in rec.evidence]) or ["_none_"]
+    history_bullets = bullets(
+        [wikilink(transcript_note_name(d, t, h), t) for d, t, h in rec.transcripts]
+    ) or ["_none_"]
     managed = "\n".join(
         [
             f"# {rec.name}",
@@ -189,6 +202,9 @@ def company_note(
             ),
             section("Ownership / Succession Context", [rec.ownership_context or "_unknown_"]),
             section("People", bullets([wikilink(slug, name) for slug, name in rec.people])),
+            section("Opportunities", opportunity_links),
+            section("Evidence", evidence_bullets),
+            section("Conversation History", history_bullets),
         ]
     ).strip()
     return rec.slug, fm, managed
@@ -219,6 +235,31 @@ def opportunity_note(
         ]
         if slug and name
     ]
+    why_it_matters = (
+        rec.evidence[0]
+        if rec.evidence
+        else "_no recorded succession signal yet — score is provisional_"
+    )
+    signals = bullets(
+        [
+            f"Score: {rec.succession_signal_score} | urgency: {rec.urgency}"
+            f" | timing: {rec.timing_window}",
+            f"Business owner signal: {rec.business_owner_signal}"
+            f" | transition signal: {rec.exit_or_transition_signal}",
+        ]
+        + [f"Pain: {item}" for item in rec.pain_points]
+        + [f"Goal: {item}" for item in rec.stated_goals]
+    )
+    risks_and_objections = (
+        [f"Risk: {r}" for r in rec.risks] + [f"Objection: {o}" for o in rec.objections]
+    ) or ["_none recorded_"]
+    evidence_bullets = bullets([f'"{snippet}"' for snippet in rec.evidence]) or ["_none_"]
+    timeline_bullets = bullets(
+        [
+            f"Timing window: {rec.timing_window}",
+            f"Next action due: {rec.next_action_due or 'unspecified'}",
+        ]
+    )
     managed = "\n".join(
         [
             f"# {rec.name}",
@@ -233,8 +274,13 @@ def opportunity_note(
                     ]
                 ),
             ),
+            section("Why It Matters", [why_it_matters]),
+            section("Succession Signals", signals),
+            section("Risks / Objections", bullets(risks_and_objections)),
             section("Next Best Action", bullets([a for a in [rec.next_action] if a] or ["_none_"])),
-            section("Links", bullets(links)),
+            section("Evidence", evidence_bullets),
+            section("Timeline", timeline_bullets),
+            section("CRM Links", bullets(links)),
         ]
     ).strip()
     return rec.slug, fm, managed

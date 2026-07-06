@@ -11,12 +11,16 @@ SAMPLES = Path(__file__).parent.parent / "examples" / "transcripts"
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
+    # Default the review gate off in tests so pipeline-mechanics tests can drive
+    # sync-crm without pre-approving every record. Tests that exercise the gate
+    # itself flip it back to True (see test_review_required_sync_only_pushes_approved_items).
     return Settings(
         llm_provider="mock",
         obsidian_vault_path=tmp_path / "vault",
         db_path=tmp_path / "ri.db",
         mock_crm_path=tmp_path / "mock_crm",
         store_raw_transcripts=True,
+        crm_review_required=False,
     )
 
 

@@ -36,6 +36,13 @@ class CompanyRecord:
     slug: str = ""
     people: list[tuple[str, str]] = field(default_factory=list)
     """(slug, name) pairs for linked people."""
+    opportunities: list[tuple[str, str, str]] = field(default_factory=list)
+    """(slug, name, stage) triples for linked opportunities."""
+    stage: str | None = None
+    """Aggregated stage — best of linked opportunities (per build-prompt company FM)."""
+    owner: str | None = None
+    evidence: list[str] = field(default_factory=list)
+    transcripts: list[tuple[str | None, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -57,6 +64,13 @@ class OpportunityRecord:
     slug: str = ""
     person_slug: str | None = None
     company_slug: str | None = None
+    evidence: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    objections: list[str] = field(default_factory=list)
+    pain_points: list[str] = field(default_factory=list)
+    stated_goals: list[str] = field(default_factory=list)
+    business_owner_signal: bool | None = None
+    exit_or_transition_signal: bool | None = None
 
 
 @dataclass

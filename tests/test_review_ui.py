@@ -11,7 +11,7 @@ def test_review_page_groups_people_with_context(settings, samples_dir):
 
     assert "Extracted people" in html
     assert "Twenty write preview" in html
-    assert "Approve all" in html
+    assert "Approve" in html and "push to Twenty" in html
     assert "Evidence and source transcript" in html
     assert "Bob Smith" in html
     assert "Smith HVAC" in html
@@ -23,7 +23,7 @@ def test_bundle_action_updates_related_review_items(settings, samples_dir):
     repo = pipeline.open_repo(settings)
     bob = next(person for person in repo.people_records() if person.name == "Bob Smith")
 
-    changed = _handle_bundle(
+    changed, sync_stats = _handle_bundle(
         settings,
         {
             "status": ["approved"],
@@ -36,6 +36,11 @@ def test_bundle_action_updates_related_review_items(settings, samples_dir):
     )
 
     assert changed == 3
+    # Approve bundle auto-pushes to the CRM (gh issue #6, Option 1).
+    assert sync_stats is not None
+    assert sync_stats["people"] == 1
+    assert sync_stats["notes"] == 1
+    assert sync_stats["tasks"] == 1
     repo = pipeline.open_repo(settings)
     assert repo.review_item("person", bob.id).status == "approved"
     assert repo.review_item("person_note", bob.id).status == "approved"

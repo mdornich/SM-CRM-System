@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.stablemischief.smcrm-daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/scripts/relationship-intel-daily.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/output/logs/smcrm-daily.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/output/logs/smcrm-daily.stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System</string>
+</dict>
+</plist>
