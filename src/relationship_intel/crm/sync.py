@@ -254,22 +254,19 @@ def sync_to_crm(
         stats["opportunities" if pushed else "skipped"] += 1
 
     logger.info("CRM sync (%s): %s", adapter.provider, stats)
-    # Warning gate: fire only when nothing landed at the top level AND some
-    # items were held back by the review gate. Two prior misfires guarded here:
-    #   1. `skipped_not_approved > 0` (not the general `skipped` counter) so
-    #      an idempotent re-sync where everything hash-matches doesn't warn.
-    #   2. Check only companies/people/opportunities for pushed_top_level —
-    #      notes/tasks land inside an already-approved person block, so
-    #      including them here would silence the warning in the case where
-    #      the user forgot to approve any top-level entities but a stale
-    #      profile change happens to write a note.
-    pushed_top_level = stats["companies"] + stats["people"] + stats["opportunities"]
-    if approved_only and pushed_top_level == 0 and stats["skipped_not_approved"] > 0:
-        logger.warning(
-            "sync_to_crm found %d unapproved review item(s) and pushed 0 — "
-            "review-required mode is on (CRM_REVIEW_REQUIRED=true). "
-            "Approve items in the review UI (relationship_intel review-ui) "
-            "or set CRM_REVIEW_REQUIRED=false to bypass.",
+    # If the review gate held anything back, surface it. INFO not WARNING —
+    # this is a "here's what's still pending" hint, not an error. Earlier
+    # versions gated the message on "and pushed 0" which oscillated between
+    # false positives (idempotent re-sync) and false negatives (a note or
+    # task landed but no top-level entity). The correct semantic is simply:
+    # "review-required is on and there are unapproved items." Whether other
+    # things pushed is orthogonal — the operator still needs to know some
+    # items are waiting.
+    if approved_only and stats["skipped_not_approved"] > 0:
+        logger.info(
+            "%d review item(s) awaiting approval — approve in the review UI "
+            "(relationship_intel review-ui) or set CRM_REVIEW_REQUIRED=false "
+            "to bypass the gate entirely.",
             stats["skipped_not_approved"],
         )
     return stats

@@ -172,6 +172,78 @@ def test_person_owner_reflects_latest_opportunity_not_oldest(tmp_path):
     assert plumbing.owner == "alice@nine80.ai"
 
 
+def test_upsert_opportunity_owner_update_on_conflict(tmp_path):
+    """A handoff on the SAME (person, company) opp — the second upsert
+    overwrites the owner field in place. Distinct from the multi-row DESC
+    coverage above: this exercises upsert_opportunity's UPDATE branch."""
+    from relationship_intel.extraction.schemas import Company, Person
+    from relationship_intel.store.db import connect
+    from relationship_intel.store.repository import Repository
+
+    repo = Repository(connect(tmp_path / "upsert.db"))
+    company_id, _ = repo.resolve_company(Company(name="Smith HVAC"))
+    person_id, _ = repo.resolve_person(Person(name="Bob Smith"), company_id)
+
+    first_id = repo.upsert_opportunity(
+        "Smith HVAC — Bob Smith — Succession",
+        person_id,
+        company_id,
+        {"stage": "discovery", "lead_type": "warm", "succession_signal_score": 40},
+        "mitch@nine80.ai",
+    )
+    second_id = repo.upsert_opportunity(
+        "Smith HVAC — Bob Smith — Succession",
+        person_id,
+        company_id,
+        {"stage": "qualified", "lead_type": "active", "succession_signal_score": 55},
+        "alice@nine80.ai",
+    )
+    assert first_id == second_id  # UPDATE-in-place, not INSERT
+
+    (person,) = [p for p in repo.people_records() if p.id == person_id]
+    (company,) = [c for c in repo.company_records() if c.id == company_id]
+    assert person.owner == "alice@nine80.ai"
+    assert company.owner == "alice@nine80.ai"
+
+
+def test_company_owner_from_latest_of_multiple_opps_at_same_company(tmp_path):
+    """Same-company multi-opp path — two different people at the same
+    company each carry an opp with a different owner. company_records()
+    walks opp_rows in reverse and picks the latest owner-bearing row, so
+    the company card shows the newer rep. Guards the `reversed(opp_rows)`
+    logic in company_records against a future silent flip to ASC."""
+    from relationship_intel.extraction.schemas import Company, Person
+    from relationship_intel.store.db import connect
+    from relationship_intel.store.repository import Repository
+
+    repo = Repository(connect(tmp_path / "multi.db"))
+    company_id, _ = repo.resolve_company(Company(name="Smith HVAC"))
+    bob_id, _ = repo.resolve_person(Person(name="Bob Smith"), company_id)
+    carol_id, _ = repo.resolve_person(Person(name="Carol Vance"), company_id)
+
+    # Older opp owned by mitch, then a newer opp for a different contact
+    # owned by alice — simulates the sales rep changing over the account's
+    # lifetime, tracked via separate opps.
+    repo.upsert_opportunity(
+        "Smith HVAC — Bob Smith — Succession",
+        bob_id,
+        company_id,
+        {"stage": "closed_lost", "lead_type": "cold", "succession_signal_score": 5},
+        "mitch@nine80.ai",
+    )
+    repo.upsert_opportunity(
+        "Smith HVAC — Carol Vance — Succession",
+        carol_id,
+        company_id,
+        {"stage": "discovery", "lead_type": "warm", "succession_signal_score": 55},
+        "alice@nine80.ai",
+    )
+
+    (company,) = [c for c in repo.company_records() if c.id == company_id]
+    assert len(company.opportunities) == 2  # multi-opp path is genuinely exercised
+    assert company.owner == "alice@nine80.ai"
+
+
 def test_yaml_value_escapes_newlines_and_backslashes():
     from relationship_intel.util.markdown import yaml_value
 
