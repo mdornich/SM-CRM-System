@@ -191,6 +191,16 @@ def _build_parser() -> argparse.ArgumentParser:
         parents=[output_parent],
     )
     sub.add_parser(
+        "provision-twenty",
+        help=(
+            "idempotently provision Twenty's schema for the review-in-Twenty "
+            "flow (Phase 1: reviewStatus custom field on Person/Company/"
+            "Opportunity, WeeklyPlan custom object, Kanban views, default-"
+            "view filters). Requires TWENTY_API_KEY."
+        ),
+        parents=[output_parent],
+    )
+    sub.add_parser(
         "review-queue",
         help="summarize pending CRM review items",
         parents=[output_parent],
@@ -407,6 +417,32 @@ def main(argv: list[str] | None = None) -> int:
                 for check in report["checks"]:
                     detail = f" — {check['detail']}" if check.get("detail") else ""
                     print(f"- {check['status']}: {check['name']}: {check['message']}{detail}")
+
+        elif args.command == "provision-twenty":
+            from relationship_intel.crm.twenty_provisioner import TwentyProvisioner
+
+            if not settings.twenty_api_key:
+                print("TWENTY_API_KEY is not set; see .env.example.", file=sys.stderr)
+                return 2
+            provisioner = TwentyProvisioner(settings.twenty_api_url, settings.twenty_api_key)
+            report = provisioner.provision_all()
+            if args.json_output:
+                _print_json(report)
+            else:
+                print("Twenty provisioning report:")
+                for entry in report["review_status_fields"]:
+                    print(f"  reviewStatus on {entry['object']}: {entry['action']}")
+                wp = report["weekly_plan"]
+                print(f"  weeklyPlan object: {wp['object_action']}")
+                for f in wp["fields"]:
+                    print(f"    - field {f['field']}: {f['action']}")
+                for entry in report["kanban_views"]:
+                    print(f"  {entry['view']} view on {entry['object']}: {entry['action']}")
+                for entry in report["default_view_filters"]:
+                    print(
+                        f"  default-view IS_NOT PENDING filter on {entry['object']}: "
+                        f"{entry['action']}"
+                    )
 
         elif args.command == "review-queue":
             summary = review_summary(settings)

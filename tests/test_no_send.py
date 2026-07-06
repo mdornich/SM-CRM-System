@@ -40,7 +40,12 @@ TOKEN_ALLOWED = {
 
 # The ONLY permitted network surfaces (spec §3.8: no sending code exists anywhere).
 # Granola is read-only intake; Twenty is additive CRM sync; Anthropic is extraction.
-HTTP_ALLOWED = {"crm/twenty_adapter.py", "extraction/llm_client.py", "intake/granola_api.py"}
+HTTP_ALLOWED = {
+    "crm/twenty_adapter.py",
+    "crm/twenty_provisioner.py",  # Twenty metadata REST — read + additive, no sends
+    "extraction/llm_client.py",
+    "intake/granola_api.py",
+}
 
 
 def _sources() -> dict[str, str]:
