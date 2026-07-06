@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.stablemischief.smcrm-reviewui</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/scripts/serve-review-ui.sh</string>
+    </array>
+
+    <!-- Start at login and keep alive so the URL is always open. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Back off between crashes so a config error doesn't spin-loop. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/output/logs/smcrm-reviewui.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/output/logs/smcrm-reviewui.stderr.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System</string>
+</dict>
+</plist>
