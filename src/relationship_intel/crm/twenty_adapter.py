@@ -38,6 +38,10 @@ from relationship_intel.crm.base import (
     PipelineItem,
     TaskPayload,
 )
+from relationship_intel.crm.twenty_provisioner import (
+    REVIEW_STATUS_FIELD_NAME,
+    REVIEW_STATUS_VALUES,
+)
 from relationship_intel.errors import NotConfiguredError
 
 logger = logging.getLogger(__name__)
@@ -316,7 +320,7 @@ class TwentyCRMAdapter(CRMAdapter):
         # approved them; without an explicit APPROVED tag the schema
         # default ('PENDING') would put every synced record back in the
         # pending-review queue on the Home dashboard.
-        body["reviewStatus"] = "APPROVED"
+        body[REVIEW_STATUS_FIELD_NAME] = REVIEW_STATUS_VALUES["approved"]
         return self._ref("person", self._create("people", "person", body))
 
     def find_or_create_company(self, company: dict) -> CRMRef:
@@ -337,7 +341,7 @@ class TwentyCRMAdapter(CRMAdapter):
             body["domainName"] = {"primaryLinkUrl": f"https://{domain}"}
         # See find_or_create_contact — tag as APPROVED so post-review
         # syncs don't reappear in the pending queue.
-        body["reviewStatus"] = "APPROVED"
+        body[REVIEW_STATUS_FIELD_NAME] = REVIEW_STATUS_VALUES["approved"]
         return self._ref("company", self._create("companies", "company", body))
 
     def create_or_update_opportunity(self, opportunity: dict) -> CRMRef:
@@ -374,7 +378,7 @@ class TwentyCRMAdapter(CRMAdapter):
             # opportunity as REJECTED) must survive a re-sync.
             self._request("PATCH", f"/opportunities/{existing['id']}", json=body)
             return self._ref("opportunity", existing)
-        body["reviewStatus"] = "APPROVED"
+        body[REVIEW_STATUS_FIELD_NAME] = REVIEW_STATUS_VALUES["approved"]
         return self._ref("opportunity", self._create("opportunities", "opportunity", body))
 
     def attach_note(self, ref: CRMRef, note: NotePayload) -> CRMRef:
