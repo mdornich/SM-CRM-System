@@ -312,6 +312,11 @@ class TwentyCRMAdapter(CRMAdapter):
             body["jobTitle"] = person["title"]
         if person.get("company_crm_id"):
             body["companyId"] = person["company_crm_id"]
+        # Records only reach the Twenty adapter after the local review UI
+        # approved them; without an explicit APPROVED tag the schema
+        # default ('PENDING') would put every synced record back in the
+        # pending-review queue on the Home dashboard.
+        body["reviewStatus"] = "APPROVED"
         return self._ref("person", self._create("people", "person", body))
 
     def find_or_create_company(self, company: dict) -> CRMRef:
@@ -330,6 +335,9 @@ class TwentyCRMAdapter(CRMAdapter):
         body: dict = {"name": company["name"]}
         if domain:
             body["domainName"] = {"primaryLinkUrl": f"https://{domain}"}
+        # See find_or_create_contact — tag as APPROVED so post-review
+        # syncs don't reappear in the pending queue.
+        body["reviewStatus"] = "APPROVED"
         return self._ref("company", self._create("companies", "company", body))
 
     def create_or_update_opportunity(self, opportunity: dict) -> CRMRef:
@@ -361,8 +369,12 @@ class TwentyCRMAdapter(CRMAdapter):
                 opportunity["timing_window"], _TIMING_WINDOW_TO_TWENTY
             )
         if existing:
+            # PATCH path deliberately does NOT overwrite reviewStatus —
+            # any manual change made in Twenty (e.g. James marking a real
+            # opportunity as REJECTED) must survive a re-sync.
             self._request("PATCH", f"/opportunities/{existing['id']}", json=body)
             return self._ref("opportunity", existing)
+        body["reviewStatus"] = "APPROVED"
         return self._ref("opportunity", self._create("opportunities", "opportunity", body))
 
     def attach_note(self, ref: CRMRef, note: NotePayload) -> CRMRef:

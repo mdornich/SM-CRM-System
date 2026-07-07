@@ -31,10 +31,17 @@ echo "$REVIEW_JSON"
 PENDING=$(printf '%s' "$REVIEW_JSON" | python -c 'import json, sys; print(json.load(sys.stdin)["by_status"]["pending"])')
 
 if [[ "$PENDING" -gt 0 ]]; then
-  osascript -e "display notification \"$PENDING item(s) awaiting approval — open http://127.0.0.1:8765/\" with title \"SM-CRM: review queue\" sound name \"Ping\"" || true
+  osascript -e "display notification \"$PENDING item(s) awaiting approval — open Twenty's Home dashboard (Pending review tab)\" with title \"SM-CRM: review queue\" sound name \"Ping\"" || true
 fi
 
 if [[ "$(date +%u)" == "1" ]]; then
   python -m relationship_intel.cli weekly-plan --json
-  osascript -e "display notification \"Weekly plan for the current week has been generated — see relationship-intelligence/weekly-plans/\" with title \"SM-CRM: weekly plan ready\"" || true
+  # Push the freshly-generated plan into Twenty's Home dashboard widget.
+  # --refresh-plan is required — provision-twenty is a no-op without it,
+  # so re-runs to reconfirm schema don't blow away manual edits (see the
+  # provisioner's ensure_home_dashboard docstring). Failures here should
+  # not break the daily pipeline; the plan is still readable in the vault.
+  python -m relationship_intel.cli provision-twenty --refresh-plan --json || \
+    echo "warn: provision-twenty --refresh-plan failed; plan is still in the vault"
+  osascript -e "display notification \"Weekly plan for the current week has been generated — see the Home dashboard in Twenty (or relationship-intelligence/weekly-plans/)\" with title \"SM-CRM: weekly plan ready\"" || true
 fi

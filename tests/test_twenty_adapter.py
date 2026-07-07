@@ -71,6 +71,67 @@ def test_existing_contact_found_by_email_is_not_recreated():
     assert ref.crm_id == "p-9"
 
 
+def test_created_person_is_tagged_review_status_approved():
+    """Records only reach the Twenty adapter after local review-UI
+    approval; without an explicit APPROVED tag the schema default
+    'PENDING' would put every synced record back in the Home dashboard's
+    pending queue."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"people": []}})
+        return httpx.Response(201, json={"data": {"createPerson": {"id": "p-1"}}})
+
+    _adapter(handler).find_or_create_contact({"name": "Bob Smith", "email": "b@x.com"})
+    body = json.loads(calls[-1].content)
+    assert body["reviewStatus"] == "APPROVED"
+
+
+def test_created_company_is_tagged_review_status_approved():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"companies": []}})
+        return httpx.Response(201, json={"data": {"createCompany": {"id": "c-1"}}})
+
+    _adapter(handler).find_or_create_company({"name": "Smith HVAC", "domain": "smithhvac.com"})
+    body = json.loads(calls[-1].content)
+    assert body["reviewStatus"] == "APPROVED"
+
+
+def test_opportunity_create_tags_approved_but_update_does_not():
+    """PATCH must NOT force reviewStatus — a manual REJECTED flip in
+    Twenty has to survive re-sync."""
+    create_calls = []
+    update_calls = []
+
+    def create_handler(request: httpx.Request) -> httpx.Response:
+        create_calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"opportunities": []}})
+        return httpx.Response(201, json={"data": {"createOpportunity": {"id": "o-1"}}})
+
+    _adapter(create_handler).create_or_update_opportunity({"name": "Deal Alpha", "stage": "new"})
+    create_body = json.loads(create_calls[-1].content)
+    assert create_body["reviewStatus"] == "APPROVED"
+
+    def update_handler(request: httpx.Request) -> httpx.Response:
+        update_calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"opportunities": [{"id": "o-9"}]}})
+        return httpx.Response(200, json={})
+
+    _adapter(update_handler).create_or_update_opportunity(
+        {"name": "Deal Alpha", "stage": "qualified"}
+    )
+    patch_body = json.loads(update_calls[-1].content)
+    assert "reviewStatus" not in patch_body
+
+
 def test_company_domain_filter_and_links_composite():
     calls = []
 
