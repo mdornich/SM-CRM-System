@@ -1,0 +1,15 @@
+.git
+.venv
+.pytest_cache
+.ruff_cache
+.benchmarks
+.tmp-980-edits
+build
+output
+*.egg-info
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc

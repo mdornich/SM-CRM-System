@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,8 +40,7 @@ def run_doctor(
         _check_llm(settings),
         _check_granola(settings),
         _check_twenty(settings),
-        _check_launchd_files(repo_root),
-        _check_launchd_installed(),
+        *_deployment_checks(repo_root),
     ]
     summary = _summary(checks)
     return {
@@ -163,6 +163,19 @@ def _check_twenty(settings: Settings) -> Check:
     except Exception as exc:  # noqa: BLE001 — readiness report degrades, never raises
         return Check("twenty", "blocked", "Twenty metadata API unreachable", str(exc))
     return Check("twenty", "ok", "Twenty metadata API reachable")
+
+
+def _deployment_checks(repo_root: Path) -> list[Check]:
+    if sys.platform == "darwin":
+        return [_check_launchd_files(repo_root), _check_launchd_installed()]
+    return [
+        Check(
+            "scheduler",
+            "warn",
+            f"launchd checks skipped on {sys.platform}",
+            "configure Coolify scheduled task: scripts/docker/daily.sh",
+        )
+    ]
 
 
 def _check_launchd_files(repo_root: Path) -> Check:

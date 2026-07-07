@@ -100,3 +100,20 @@ def test_doctor_ok_for_codex_provider_when_cli_exists(tmp_path, monkeypatch):
     checks = {check["name"]: check for check in report["checks"]}
     assert checks["llm"]["status"] == "ok"
     assert "Codex CLI" in checks["llm"]["message"]
+
+
+def test_doctor_skips_launchd_checks_on_linux_for_coolify(tmp_path, monkeypatch):
+    monkeypatch.setattr(doctor.sys, "platform", "linux")
+    settings = Settings(
+        obsidian_vault_path=tmp_path / "vault",
+        transcripts_inbox_dir=tmp_path / "inbox",
+        db_path=tmp_path / "ri.db",
+    )
+
+    report = run_doctor(settings, repo_root=tmp_path / "repo-without-launchd")
+
+    checks = {check["name"]: check for check in report["checks"]}
+    assert "launchd_files" not in checks
+    assert "launchd_installed" not in checks
+    assert checks["scheduler"]["status"] == "warn"
+    assert "Coolify" in checks["scheduler"]["detail"]
