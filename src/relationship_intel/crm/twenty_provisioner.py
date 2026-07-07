@@ -6,14 +6,19 @@ modifying Twenty source code:
 
 - `reviewStatus` SELECT field (pending/approved/rejected/obsidian_only) on
   Person, Company, Opportunity. (Phase 1's only durable output.)
-- A single "Home" dashboard, pinned to sidebar position 0, containing:
-    * a RECORD_TABLE widget backed by a "Pending review" View on Person
-      (filter: reviewStatus IS PENDING),
-    * a STANDALONE_RICH_TEXT widget carrying the current weekly plan.
+- A "Home" dashboard with two tabs:
+    * Tab 1 "Pending review" — an IFRAME widget embedding the local
+      review UI (http://127.0.0.1:8765). Triage happens in the local
+      UI's per-bundle view; only approved records get pushed to Twenty.
+    * Tab 2 "Weekly plan" — a STANDALONE_RICH_TEXT widget carrying the
+      current weekly plan markdown.
 - Opt-in cleanup that removes Phase 1's dead artifacts (weeklyPlan custom
   object, its manually-published record, three "Review queue" Kanban views).
+- Opt-in destructive backfill that flips pre-existing PENDING records to
+  APPROVED (one-shot, gated behind CLI confirmation).
 
-All ensure_* operations are idempotent — re-running is a no-op. Only uses
+All ensure_* operations are idempotent — re-running is a no-op unless the
+caller explicitly asks for a refresh (see `refresh_rich_text`). Only uses
 Twenty's public metadata REST API. Never modifies Twenty source.
 """
 
@@ -217,10 +222,6 @@ class TwentyProvisioner:
         payload = self._request("GET", "/metadata/viewFilters", params={"viewId": view_id})
         return payload if isinstance(payload, list) else payload.get("data", [])
 
-    def _view_fields_for_view(self, view_id: str) -> list[dict]:
-        payload = self._request("GET", "/metadata/viewFields", params={"viewId": view_id})
-        return payload if isinstance(payload, list) else payload.get("data", [])
-
     def _list_page_layouts(self) -> list[dict]:
         payload = self._request("GET", "/metadata/pageLayouts", params={"limit": 1000})
         return payload if isinstance(payload, list) else payload.get("data", [])
@@ -296,17 +297,23 @@ class TwentyProvisioner:
         review_ui_url: str = DEFAULT_REVIEW_UI_URL,
         refresh_rich_text: bool = False,
     ) -> dict:
-        """Ensure the single-dashboard shape exists:
+        """Ensure the two-tab Home dashboard exists:
 
         1. PageLayout (type=DASHBOARD, name=name).
-        2. PageLayoutTab (title=name, position=0, layoutMode=GRID).
-        3. RECORD_TABLE widget over the pending-review Person view.
-        4. STANDALONE_RICH_TEXT widget carrying `rich_text_body` (or a
-           placeholder if None — Phase 2's weekly-plan command overwrites it).
-        5. Dashboard record via /rest/dashboards, pinned position=0.
-        6. NavigationMenuItem (type=PAGE_LAYOUT) at position=0 — this is
-           what makes the dashboard the sidebar-clicked-logo landing page
-           (see useDefaultHomePagePath.ts).
+        2. PageLayoutTab #0 titled "Pending review" (layoutMode=GRID).
+        3. IFRAME widget on tab #0 pointing at `review_ui_url` — embeds
+           the local review UI so triage happens inside Twenty without
+           pushing unapproved extraction candidates to Person/Company/
+           Opportunity.
+        4. PageLayoutTab #1 titled "Weekly plan" (layoutMode=GRID).
+        5. STANDALONE_RICH_TEXT widget on tab #1 carrying `rich_text_body`
+           (or a placeholder if None). Only overwritten on existing
+           widgets when `refresh_rich_text=True` so re-runs of
+           provision-twenty don't blow away manual edits made in Twenty.
+        6. Dashboard record via /rest/dashboards. NO NavigationMenuItem
+           is created — Twenty's validator rejects PAGE_LAYOUT nav items
+           pointing at DASHBOARD layouts; the Dashboard record alone is
+           enough to surface the dashboard in the sidebar.
 
         Every step is idempotent (GET-list, skip if a matching row exists).
         """
@@ -613,10 +620,13 @@ class TwentyProvisioner:
 
     # Twenty caps `limit` at 60 on record endpoints. Enough for a POC
     # workspace; a genuine multi-page traversal would need Twenty's
-    # base64-encoded cursor (encodeCursor in cursors.util.ts), which the
-    # `starting_after=<id>` shape below does NOT satisfy — so we cap at
-    # a single page and log a warning if the workspace is bigger.
-    _BACKFILL_MAX_PER_OBJECT = 60
+    # base64-encoded cursor (encodeCursor in cursors.util.ts), which
+    # the naive `starting_after=<id>` shape did NOT satisfy — so we cap
+    # at a single page and log a warning if the workspace is bigger.
+    # We ask for `_PROCESS + 1` and only process `_PROCESS` items so
+    # "there's more" is disambiguated from "there's exactly this much".
+    _BACKFILL_PROCESS_PER_OBJECT = 60
+    _BACKFILL_MAX_PER_OBJECT = 61
 
     def backfill_pending_to_approved(self) -> dict:
         """DESTRUCTIVE, ONE-SHOT: flip every existing People / Companies /
@@ -655,8 +665,13 @@ class TwentyProvisioner:
                 )
                 data = payload.get("data", {})
                 items = data.get(plural, []) if isinstance(data, dict) else []
-                if len(items) >= self._BACKFILL_MAX_PER_OBJECT:
+                # We asked for PROCESS+1 and only iterate PROCESS. Getting
+                # the extra item back means there's more to fetch beyond
+                # what one page can hold — hence truncated. Getting exactly
+                # PROCESS or fewer means we saw every record.
+                if len(items) > self._BACKFILL_PROCESS_PER_OBJECT:
                     entry["truncated"] = True
+                    items = items[: self._BACKFILL_PROCESS_PER_OBJECT]
                 for record in items:
                     status = record.get(REVIEW_STATUS_FIELD_NAME)
                     if status != pending_value:
@@ -815,11 +830,4 @@ def _find_by(records: list[dict], **match) -> str | None:
     for r in records:
         if all(r.get(k) == v for k, v in match.items()):
             return r.get("id")
-    return None
-
-
-def _refetch_view_id(prov: TwentyProvisioner, object_id: str, name: str) -> str | None:
-    for view in prov._views_for_object(object_id):
-        if view.get("name") == name and view.get("type") == "TABLE_WIDGET":
-            return view.get("id")
     return None

@@ -511,8 +511,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.backfill_approved:
                 # Destructive one-shot — insist on interactive `YES` so a
                 # re-invocation doesn't silently promote real candidates.
-                # Skip the prompt when writing JSON output (piped/scripted).
-                if not args.json_output:
+                # Skip the prompt entirely when writing JSON output OR when
+                # stdin isn't a TTY (launchd, cron, headless SSH) — in
+                # those contexts `input()` raises EOFError and would crash
+                # the whole command; treat non-interactive as an implicit
+                # "no confirmation" and refuse the destructive step.
+                interactive = sys.stdin.isatty() and not args.json_output
+                confirmed = False
+                if interactive:
                     prompt = (
                         "\n--backfill-approved is destructive and NOT idempotent.\n"
                         "It flips every Twenty record with reviewStatus=PENDING to\n"
@@ -520,12 +526,18 @@ def main(argv: list[str] | None = None) -> int:
                         "run this after Phase 1.5 is live.\n"
                         "\nType YES to confirm, anything else to skip: "
                     )
-                    if input(prompt).strip() != "YES":
-                        print("Backfill skipped.", file=sys.stderr)
-                        args.backfill_approved = False
-                if args.backfill_approved:
+                    try:
+                        confirmed = input(prompt).strip() == "YES"
+                    except EOFError:
+                        confirmed = False
+                if confirmed:
                     backfill_report = provisioner.backfill_pending_to_approved()
                     report["backfill"] = backfill_report
+                else:
+                    print(
+                        "Backfill skipped (requires interactive YES confirmation).",
+                        file=sys.stderr,
+                    )
             if args.json_output:
                 _print_json(report)
             else:
