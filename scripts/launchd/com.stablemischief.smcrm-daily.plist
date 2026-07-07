@@ -9,7 +9,7 @@
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>/Users/mitchdornich/GitHub/SM-CRM-System/scripts/relationship-intel-daily.sh</string>
+        <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System/scripts/relationship-intel-daily.sh</string>
     </array>
 
     <key>StartCalendarInterval</key>
@@ -32,6 +32,6 @@
     <false/>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mitchdornich/GitHub/SM-CRM-System</string>
+    <string>/Users/mitchdornich/Documents/GitHub/SM-CRM-System</string>
 </dict>
 </plist>

@@ -4,7 +4,7 @@
 # alive so the operator can just open http://127.0.0.1:8765/ in a browser.
 set -euo pipefail
 
-REPO_DIR="/Users/mitchdornich/GitHub/SM-CRM-System"
+REPO_DIR="/Users/mitchdornich/Documents/GitHub/SM-CRM-System"
 cd "$REPO_DIR"
 
 mkdir -p output/logs
