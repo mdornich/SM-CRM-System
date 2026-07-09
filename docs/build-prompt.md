@@ -211,7 +211,9 @@ Implement commands like:
 Use `.env.example` (authoritative trimmed version in architecture.md §6):
 
     LLM_PROVIDER=mock
+    CODEX_MODEL=
     ANTHROPIC_API_KEY=
+    ANTHROPIC_MODEL=claude-sonnet-5
     GRANOLA_API_KEY=
     OBSIDIAN_VAULT_PATH=./output/obsidian-vault
     OBSIDIAN_MODE=plain

@@ -165,7 +165,9 @@ def test_doctor_json_outputs_readiness_checks(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] in {"ok", "warn", "blocked"}
     names = {check["name"] for check in payload["checks"]}
-    assert {"obsidian", "db", "granola", "twenty", "launchd_files"} <= names
+    expected = {"obsidian", "db", "granola", "twenty"}
+    expected.add("launchd_files" if sys.platform == "darwin" else "scheduler")
+    assert expected <= names
 
 
 def test_eval_command_returns_nonzero_on_failed_expectation(tmp_path):

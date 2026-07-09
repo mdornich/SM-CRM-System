@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from relationship_intel.errors import NotConfiguredError
-from relationship_intel.extraction.llm_client import AnthropicClient
+from relationship_intel.extraction.llm_client import AnthropicClient, make_client
 
 
 def _anthropic_response(text: str) -> httpx.Response:
@@ -43,6 +43,56 @@ def test_anthropic_json_parse_retry_succeeds_on_second_response():
     assert client.complete("system", '{"transcript": "short", "metadata": {}}', {}) == {"ok": True}
     assert len(calls) == 2
     assert "previous response was not valid JSON" in calls[1]["system"]
+
+
+def test_anthropic_model_can_be_overridden_in_request():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return _anthropic_response('{"ok": true}')
+
+    client = AnthropicClient(
+        "test-key",
+        model="claude-sonnet-test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.complete("system", '{"transcript": "short", "metadata": {}}', {}) == {"ok": True}
+    assert calls[0]["model"] == "claude-sonnet-test"
+
+
+def test_anthropic_default_model_is_sent_in_request():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return _anthropic_response('{"ok": true}')
+
+    client = AnthropicClient(
+        "test-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.complete("system", '{"transcript": "short", "metadata": {}}', {}) == {"ok": True}
+    assert calls[0]["model"] == AnthropicClient.DEFAULT_MODEL
+
+
+def test_anthropic_blank_model_falls_back_to_default():
+    client = AnthropicClient("test-key", model="   ")
+
+    assert client.model == AnthropicClient.DEFAULT_MODEL
+
+
+def test_make_client_passes_anthropic_model_override():
+    client = make_client(
+        "anthropic",
+        anthropic_api_key="test-key",
+        anthropic_model="claude-sonnet-test",
+    )
+
+    assert isinstance(client, AnthropicClient)
+    assert client.model == "claude-sonnet-test"
 
 
 def test_anthropic_truncates_long_transcript_before_request():
