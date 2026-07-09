@@ -24,6 +24,7 @@ def _repo_root(tmp_path: Path) -> Path:
 
 def test_doctor_reports_warns_without_live_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
     settings = Settings(
         obsidian_vault_path=tmp_path / "vault",
         transcripts_inbox_dir=tmp_path / "inbox",
