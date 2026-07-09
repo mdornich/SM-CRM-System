@@ -69,9 +69,11 @@ Configuration via `.env` (copy `.env.example`). Set `LLM_PROVIDER=codex` to run
 real transcript extraction through your local Codex CLI login; optionally set
 `CODEX_MODEL` (for example `gpt-5.4-mini`) to override the Codex CLI default.
 Use `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY` for direct Anthropic
-extraction. Set `CRM_REVIEW_REQUIRED=true` for human-in-the-loop sync: `ingest`
-creates the review queue, `review-ui` lets a human approve/edit/reject CRM items,
-and `sync-crm` pushes only approved items. Weeks start **Monday**;
+extraction; optionally set `ANTHROPIC_MODEL` to override the default
+`claude-sonnet-5` without a code change. Set `CRM_REVIEW_REQUIRED=true` for
+human-in-the-loop sync: `ingest` creates the review queue, `review-ui` lets a
+human approve/edit/reject CRM items, and `sync-crm` pushes only approved items.
+Weeks start **Monday**;
 `weekly-plan` defaults to the current week's Monday. For the local go-live setup,
 `TRANSCRIPTS_INBOX_DIR` should point at the vault's `transcripts-inbox` folder.
 

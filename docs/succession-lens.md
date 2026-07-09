@@ -43,7 +43,8 @@ follow-up (the lens's conservative-warmth rule). Every artifact is stamped
 
 ## What Phase 1 changes
 
-Only `LLM_PROVIDER=anthropic` + a key. The `AnthropicClient` sends the same
-prompt + JSON schema; validation, evidence rules, storage, and planning are
-identical. Exit criterion: extraction quality accepted by Mitch/James on ≥ 5
-real (redacted) Granola transcripts.
+Only `LLM_PROVIDER=anthropic` + a key, with optional `ANTHROPIC_MODEL` override
+when Anthropic rotates model IDs. The `AnthropicClient` sends the same prompt +
+JSON schema; validation, evidence rules, storage, and planning are identical.
+Exit criterion: extraction quality accepted by Mitch/James on ≥ 5 real
+(redacted) Granola transcripts.

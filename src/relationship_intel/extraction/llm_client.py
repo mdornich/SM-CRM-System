@@ -174,7 +174,7 @@ class AnthropicClient(LLMClient):
     """Real extraction path (Phase 1). Inert without ANTHROPIC_API_KEY."""
 
     API_URL = "https://api.anthropic.com/v1/messages"
-    MODEL = "claude-sonnet-5"
+    DEFAULT_MODEL = "claude-sonnet-5"
     DEFAULT_MAX_OUTPUT_TOKENS = 4096
     DEFAULT_MAX_INPUT_CHARS = 120_000
     # Conservative ceiling guard; exact billing is provider-side, but this blocks
@@ -187,12 +187,14 @@ class AnthropicClient(LLMClient):
         self,
         api_key: str = "",
         *,
+        model: str = DEFAULT_MODEL,
         transport: Any | None = None,
         max_input_chars: int = DEFAULT_MAX_INPUT_CHARS,
         max_cost_usd: float = DEFAULT_MAX_COST_USD,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     ):
         self.api_key = api_key
+        self.model = model.strip() or self.DEFAULT_MODEL
         self.transport = transport
         self.max_input_chars = max_input_chars
         self.max_cost_usd = max_cost_usd
@@ -250,7 +252,7 @@ class AnthropicClient(LLMClient):
                     "content-type": "application/json",
                 },
                 json={
-                    "model": self.MODEL,
+                    "model": self.model,
                     "max_tokens": self.max_output_tokens,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user}],
@@ -558,9 +560,14 @@ def _matches(sentence: str, cues: list[str]) -> bool:
     return any(cue in lowered for cue in cues)
 
 
-def make_client(provider: str, anthropic_api_key: str = "", codex_model: str = "") -> LLMClient:
+def make_client(
+    provider: str,
+    anthropic_api_key: str = "",
+    codex_model: str = "",
+    anthropic_model: str = AnthropicClient.DEFAULT_MODEL,
+) -> LLMClient:
     if provider == "anthropic":
-        return AnthropicClient(anthropic_api_key)
+        return AnthropicClient(anthropic_api_key, model=anthropic_model)
     if provider == "codex":
         return CodexExecClient(model=codex_model)
     return MockLLMClient()

@@ -23,6 +23,7 @@ class Extractor:
             settings.llm_provider,
             settings.anthropic_api_key,
             settings.codex_model,
+            settings.anthropic_model,
         )
 
     def extract(self, raw: RawTranscript) -> ExtractedRelationshipIntelligence:

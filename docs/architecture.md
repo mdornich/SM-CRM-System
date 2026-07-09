@@ -526,6 +526,7 @@ Twenty field mappings all reference them — one place to evolve.
 LLM_PROVIDER=mock            # mock | codex | anthropic
 CODEX_MODEL=                 # optional model override for the Codex CLI
 ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5  # optional model override for Anthropic API
 
 # Obsidian
 OBSIDIAN_VAULT_PATH=./output/obsidian-vault

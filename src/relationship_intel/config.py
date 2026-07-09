@@ -22,6 +22,7 @@ class Settings:
     llm_provider: str = "mock"
     codex_model: str = ""
     anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
     obsidian_vault_path: Path = Path("./output/obsidian-vault")
     obsidian_mode: str = "plain"
     store_raw_transcripts: bool = True
@@ -54,6 +55,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         llm_provider=env.get("LLM_PROVIDER", "mock").strip() or "mock",
         codex_model=env.get("CODEX_MODEL", "").strip(),
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", ""),
+        anthropic_model=env.get("ANTHROPIC_MODEL", "claude-sonnet-5").strip() or "claude-sonnet-5",
         obsidian_vault_path=Path(env.get("OBSIDIAN_VAULT_PATH") or "./output/obsidian-vault"),
         obsidian_mode=env.get("OBSIDIAN_MODE", "plain").strip() or "plain",
         store_raw_transcripts=_bool(env.get("STORE_RAW_TRANSCRIPTS"), True),
