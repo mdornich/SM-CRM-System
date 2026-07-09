@@ -53,6 +53,16 @@ def test_env_overrides_win(monkeypatch):
     assert settings.stall_threshold_days == 30
 
 
+def test_blank_anthropic_model_env_falls_back_to_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANTHROPIC_MODEL", "   ")
+    empty_env = tmp_path / "empty.env"
+    empty_env.touch()
+
+    settings = load_settings(env_file=empty_env)
+
+    assert settings.anthropic_model == "claude-sonnet-5"
+
+
 def test_store_raw_transcripts_boolean_forms(monkeypatch):
     for value, expected in (
         ("false", False),

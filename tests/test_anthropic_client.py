@@ -62,6 +62,22 @@ def test_anthropic_model_can_be_overridden_in_request():
     assert calls[0]["model"] == "claude-sonnet-test"
 
 
+def test_anthropic_default_model_is_sent_in_request():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return _anthropic_response('{"ok": true}')
+
+    client = AnthropicClient(
+        "test-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.complete("system", '{"transcript": "short", "metadata": {}}', {}) == {"ok": True}
+    assert calls[0]["model"] == AnthropicClient.DEFAULT_MODEL
+
+
 def test_anthropic_blank_model_falls_back_to_default():
     client = AnthropicClient("test-key", model="   ")
 
