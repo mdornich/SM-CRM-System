@@ -66,7 +66,37 @@ Start: `cd ~/Documents/GitHub/twenty && export PATH="$HOME/.nvm/versions/node/v2
   logged no-op pending a custom-field decision.
 - Custom fields are provisioned additively by `sync-crm --crm twenty` through
   `/rest/metadata`: Opportunity gets `successionSignalScore` (NUMBER),
-  `leadType` (SELECT), and `timingWindow` (SELECT). The API key role must have
-  the DATA_MODEL settings permission, or schema provisioning fails before sync.
+  `leadType` (SELECT), and `timingWindow` (SELECT); Person gets `wedge`
+  (MULTI_SELECT), `wedgePrimary` (SELECT), `source` (TEXT) and `lifecycleStage`
+  (SELECT). The API key role must have the DATA_MODEL settings permission, or
+  schema provisioning fails before sync.
+
+## Person GTM custom fields (Succession `gtm-crm-architecture.md` §4)
+
+`PERSON_CUSTOM_FIELDS` in `twenty_adapter.py` mirrors the shape Twenty already
+carries on the mini (values read live, GET only, 2026-09-03):
+
+| Person dict key | Twenty field | Type | Allowed values |
+|---|---|---|---|
+| `wedge` | `wedge` | MULTI_SELECT | `EOS_PRACTITIONER` `ACQUIRER` `EXIT_PLANNER` `XPX` `OTHER` `NA` |
+| `wedge_primary` | `wedgePrimary` | SELECT | same, minus `NA` |
+| `source` | `source` | TEXT | free text (`warm-james`, `cold-eos-list`, ...) |
+| `lifecycle_stage` | `lifecycleStage` | SELECT | `COLD` `CONTACTED` `ENGAGED` `MEETING` `OPPORTUNITY` `CUSTOMER` `LOST` `NURTURE` |
+
+- Inputs are normalised: the option value, the human label, or a spaced/snake
+  variant all fold onto the canonical value (`"EOS Practitioner"` →
+  `EOS_PRACTITIONER`).
+- An unrecognised select / multi-select value raises `ValueError` **before any
+  HTTP request** — never a silent drop and never a partial write.
+- Keys absent from the person dict are absent from the request body, so
+  `find_or_create_contact` on an existing record and `update_contact` PATCH only
+  what the caller named; manual edits in Twenty survive a re-sync.
+- **Lifecycle transitions are not enforced.** §4 lists an ordered progression
+  (`Cold → Contacted → Engaged → Meeting → Opportunity → Customer / Lost /
+  Nurture`), but the adapter models no Person stage machine — it writes the value
+  it is given. `LIFECYCLE_STAGE_ORDER` records the order for callers that want it.
+- **Open item:** the live `wedge` field carries a sixth option `NA` that §4 does
+  not list. The adapter supports it; whether it is ratified into the spec or
+  removed from Twenty is Mitch's call.
 - Upstream moves fast; after pulling the fork, re-verify the composite shapes
   before trusting the adapter.

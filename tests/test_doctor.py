@@ -55,7 +55,7 @@ def test_doctor_blocks_when_twenty_configured_but_unreachable(tmp_path, monkeypa
     def boom(self):
         raise RuntimeError("connection refused")
 
-    monkeypatch.setattr(TwentyCRMAdapter, "_opportunity_metadata", boom)
+    monkeypatch.setattr(TwentyCRMAdapter, "_objects_metadata", boom)
 
     report = run_doctor(settings, repo_root=_repo_root(tmp_path))
 
@@ -78,7 +78,7 @@ def test_doctor_ok_for_twenty_probe_success(tmp_path, monkeypatch):
     def ok(self):
         return {"fields": []}
 
-    monkeypatch.setattr(TwentyCRMAdapter, "_opportunity_metadata", ok)
+    monkeypatch.setattr(TwentyCRMAdapter, "_objects_metadata", ok)
 
     report = run_doctor(settings, repo_root=_repo_root(tmp_path))
 

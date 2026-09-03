@@ -161,7 +161,17 @@ def test_ensure_schema_creates_missing_opportunity_custom_fields():
                             "id": "object-opportunity",
                             "nameSingular": "opportunity",
                             "fields": [{"name": "leadType"}],
-                        }
+                        },
+                        {
+                            "id": "object-person",
+                            "nameSingular": "person",
+                            "fields": [
+                                {"name": "wedge"},
+                                {"name": "wedgePrimary"},
+                                {"name": "source"},
+                                {"name": "lifecycleStage"},
+                            ],
+                        },
                     ],
                     "pageInfo": {},
                     "totalCount": 1,
@@ -172,7 +182,7 @@ def test_ensure_schema_creates_missing_opportunity_custom_fields():
     result = _adapter(handler).ensure_schema()
     assert result == {
         "created": ["successionSignalScore", "timingWindow"],
-        "existing": ["leadType"],
+        "existing": ["leadType", "wedge", "wedgePrimary", "source", "lifecycleStage"],
     }
     posts = [request for request in calls if request.method == "POST"]
     assert [json.loads(request.content)["name"] for request in posts] == [
@@ -205,7 +215,17 @@ def test_ensure_schema_noops_when_fields_exist():
                             {"name": "leadType"},
                             {"name": "timingWindow"},
                         ],
-                    }
+                    },
+                    {
+                        "id": "object-person",
+                        "nameSingular": "person",
+                        "fields": [
+                            {"name": "wedge"},
+                            {"name": "wedgePrimary"},
+                            {"name": "source"},
+                            {"name": "lifecycleStage"},
+                        ],
+                    },
                 ],
             },
         )
@@ -213,7 +233,15 @@ def test_ensure_schema_noops_when_fields_exist():
     result = _adapter(handler).ensure_schema()
     assert result == {
         "created": [],
-        "existing": ["successionSignalScore", "leadType", "timingWindow"],
+        "existing": [
+            "successionSignalScore",
+            "leadType",
+            "timingWindow",
+            "wedge",
+            "wedgePrimary",
+            "source",
+            "lifecycleStage",
+        ],
     }
     assert [request.method for request in calls] == ["GET"]
 
@@ -422,3 +450,200 @@ def test_tag_record_raises_not_implemented_error():
     adapter = _adapter(handler)
     with pytest.raises(NotImplementedError, match="tag_record"):
         adapter.tag_record(ref, ["prospect", "warm"])
+
+
+# --- Person GTM custom fields (gtm-crm-architecture.md §4) --------------------
+
+
+def _people_handler(calls, existing=None, record=None):
+    """GET /people returns `existing` (a list); POST creates p-1; PATCH 200."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"people": existing or []}})
+        if request.method == "PATCH":
+            return httpx.Response(200, json={"data": {"updatePerson": record or {"id": "p-9"}}})
+        return httpx.Response(201, json={"data": {"createPerson": {"id": "p-1"}}})
+
+    return handler
+
+
+def test_person_custom_fields_written_on_create():
+    calls = []
+    _adapter(_people_handler(calls)).find_or_create_contact(
+        {
+            "name": "Bob Smith",
+            "email": "bob@x.com",
+            "wedge": ["EOS Practitioner", "Acquirer"],
+            "wedge_primary": "EOS Practitioner",
+            "source": "cold-eos-list",
+            "lifecycle_stage": "Cold",
+        }
+    )
+    body = json.loads(calls[-1].content)
+    assert body["wedge"] == ["EOS_PRACTITIONER", "ACQUIRER"]
+    assert body["wedgePrimary"] == "EOS_PRACTITIONER"
+    assert body["source"] == "cold-eos-list"
+    assert body["lifecycleStage"] == "COLD"
+
+
+def test_person_custom_fields_round_trip_through_find_contact():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "people": [
+                        {
+                            "id": "p-3",
+                            "name": {"firstName": "Bob", "lastName": "Smith"},
+                            "emails": {"primaryEmail": "bob@x.com"},
+                            "wedge": ["EOS_PRACTITIONER", "XPX"],
+                            "wedgePrimary": "EOS_PRACTITIONER",
+                            "source": "warm-james",
+                            "lifecycleStage": "ENGAGED",
+                        }
+                    ]
+                }
+            },
+        )
+
+    found = _adapter(handler).find_contact({"email": "bob@x.com"})
+    assert found["wedge"] == ["EOS_PRACTITIONER", "XPX"]
+    assert found["wedge_primary"] == "EOS_PRACTITIONER"
+    assert found["source"] == "warm-james"
+    assert found["lifecycle_stage"] == "ENGAGED"
+
+
+def test_multi_select_wedge_accepts_several_values_and_canonical_forms():
+    calls = []
+    _adapter(_people_handler(calls)).find_or_create_contact(
+        {
+            "name": "Ann Lee",
+            "wedge": ["EOS_PRACTITIONER", "exit planner", "XPX", "NA"],
+        }
+    )
+    body = json.loads(calls[-1].content)
+    assert body["wedge"] == ["EOS_PRACTITIONER", "EXIT_PLANNER", "XPX", "NA"]
+
+
+@pytest.mark.parametrize(
+    "person",
+    [
+        {"name": "Bad One", "wedge_primary": "Investor"},
+        {"name": "Bad Two", "lifecycle_stage": "Won"},
+        {"name": "Bad Three", "wedge": ["EOS Practitioner", "Investor"]},
+        {"name": "Bad Four", "wedge": "EOS Practitioner"},
+    ],
+)
+def test_invalid_person_select_value_fails_closed_with_nothing_written(person):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise AssertionError("no request may be issued for an invalid option value")
+
+    with pytest.raises(ValueError):
+        _adapter(handler).find_or_create_contact(person)
+    assert calls == []
+
+
+def test_existing_person_patches_only_supplied_custom_fields():
+    calls = []
+    ref = _adapter(_people_handler(calls, existing=[{"id": "p-9"}])).find_or_create_contact(
+        {"name": "Bob Smith", "email": "bob@x.com", "lifecycle_stage": "Meeting"}
+    )
+    assert ref.crm_id == "p-9"
+    patch = next(c for c in calls if c.method == "PATCH")
+    assert patch.url.path == "/rest/people/p-9"
+    assert json.loads(patch.content) == {"lifecycleStage": "MEETING"}
+
+
+def test_existing_person_without_custom_fields_is_not_patched():
+    calls = []
+    _adapter(_people_handler(calls, existing=[{"id": "p-9"}])).find_or_create_contact(
+        {"name": "Bob Smith", "email": "bob@x.com"}
+    )
+    assert [c.method for c in calls] == ["GET"]
+
+
+def test_update_contact_patches_only_named_fields():
+    calls = []
+    adapter = _adapter(_people_handler(calls))
+    adapter.update_contact(CRMRef("twenty", "person", "p-4"), {"source": "referral"})
+    patch = next(c for c in calls if c.method == "PATCH")
+    assert patch.url.path == "/rest/people/p-4"
+    assert json.loads(patch.content) == {"source": "referral"}
+
+
+def test_update_contact_rejects_invalid_value_without_writing():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise AssertionError("no request may be issued for an invalid option value")
+
+    with pytest.raises(ValueError, match="lifecycle_stage"):
+        _adapter(handler).update_contact(
+            CRMRef("twenty", "person", "p-4"), {"lifecycle_stage": "Closed"}
+        )
+    assert calls == []
+
+
+def test_ensure_schema_creates_missing_person_custom_fields():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "object-opportunity",
+                            "nameSingular": "opportunity",
+                            "fields": [
+                                {"name": "successionSignalScore"},
+                                {"name": "leadType"},
+                                {"name": "timingWindow"},
+                            ],
+                        },
+                        {
+                            "id": "object-person",
+                            "nameSingular": "person",
+                            "fields": [{"name": "source"}],
+                        },
+                    ]
+                },
+            )
+        return httpx.Response(201, json={"id": "field-new"})
+
+    result = _adapter(handler).ensure_schema()
+    assert result["created"] == ["wedge", "wedgePrimary", "lifecycleStage"]
+    assert "source" in result["existing"]
+    posts = [json.loads(c.content) for c in calls if c.method == "POST"]
+    assert all(body["objectMetadataId"] == "object-person" for body in posts)
+    wedge = posts[0]
+    assert wedge["type"] == "MULTI_SELECT"
+    assert [option["value"] for option in wedge["options"]] == [
+        "EOS_PRACTITIONER",
+        "ACQUIRER",
+        "EXIT_PLANNER",
+        "XPX",
+        "OTHER",
+        "NA",
+    ]
+    assert posts[1]["type"] == "SELECT"
+    assert "NA" not in {option["value"] for option in posts[1]["options"]}
+    assert [option["value"] for option in posts[2]["options"]] == [
+        "COLD",
+        "CONTACTED",
+        "ENGAGED",
+        "MEETING",
+        "OPPORTUNITY",
+        "CUSTOMER",
+        "LOST",
+        "NURTURE",
+    ]

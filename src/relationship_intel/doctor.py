@@ -159,7 +159,7 @@ def _check_twenty(settings: Settings) -> Check:
     try:
         from relationship_intel.crm.twenty_adapter import TwentyCRMAdapter
 
-        TwentyCRMAdapter(settings.twenty_api_url, settings.twenty_api_key)._opportunity_metadata()
+        TwentyCRMAdapter(settings.twenty_api_url, settings.twenty_api_key)._objects_metadata()
     except Exception as exc:  # noqa: BLE001 — readiness report degrades, never raises
         return Check("twenty", "blocked", "Twenty metadata API unreachable", str(exc))
     return Check("twenty", "ok", "Twenty metadata API reachable")
