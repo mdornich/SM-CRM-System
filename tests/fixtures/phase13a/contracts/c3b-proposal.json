@@ -1,0 +1,25 @@
+{
+  "evidence": {
+    "captured_at": "2026-09-04T12:00:00Z",
+    "content_hash": "4a6d9444dcc6da7f0962cd85173fa2c9cfdf89dc3ae1528c998b8e86ecc893d7",
+    "excerpt": "Example Practice provides professional services.",
+    "id": "evidence:v1:c5ecb8cdddb4242ac7ddfb5c1f10bbd01042bc1461a91f673b45327a5068e71a",
+    "locator": "excerpt:0",
+    "occurred_at": null,
+    "source_ref": "https://firm.example/",
+    "source_type": "firm_website"
+  },
+  "observation": {
+    "account_id": null,
+    "confidence": 0.9,
+    "evidence_id": "evidence:v1:c5ecb8cdddb4242ac7ddfb5c1f10bbd01042bc1461a91f673b45327a5068e71a",
+    "id": "observation:v1:1c2e2e3c060fb4c0c11b92f018d23cb0ed39aa3df768f4342a3a5c53d779c4b0",
+    "method": "fetch",
+    "person_id": 1,
+    "predicate": "firm_website_present",
+    "value": {
+      "confidence_label": "high",
+      "present": true
+    }
+  }
+}
