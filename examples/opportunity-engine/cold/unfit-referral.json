@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "unfit-referral",
+  "pack_version_id": "succession:cold-v0",
+  "evidence": [
+    {
+      "id": "e0",
+      "source_type": "synthetic-public-profile",
+      "source_ref": "fixture:profile-0",
+      "content_hash": "a1cf8529f306498294ef2154f7b5ca0e2528d6a7f83dea5508a07ddf6fd93c55",
+      "locator": "paragraph:1",
+      "excerpt": "Synthetic directory: Alex Example is a Certified EOS Implementer and controls practice recommendations as its owner. Name Alex Example, firm Example Practice, geography Chicago match the public firm profile.",
+      "captured_at": "2026-09-04T00:00:00Z",
+      "occurred_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "e1",
+      "source_type": "synthetic-public-profile",
+      "source_ref": "fixture:profile-1",
+      "content_hash": "baa43b332ee3c9ecc1f6e8172f0b2243c021bd11567cad0cbf4b6115c9e2c33a",
+      "locator": "paragraph:1",
+      "excerpt": "Synthetic referral: one-off advisor with no active portfolio, referring an acquirer for a possible later wedge. Acquirer qualification is deferred.",
+      "captured_at": "2026-09-04T00:00:00Z",
+      "occurred_at": "2026-09-03T00:00:00Z"
+    }
+  ],
+  "observations": [
+    {
+      "id": "referral",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "human_label",
+      "value": {
+        "criterion": "excl_no_portfolio",
+        "proved": true
+      },
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    }
+  ],
+  "expected": {
+    "classification": "unfit",
+    "eligible": false,
+    "signal_keys": [
+      "excl_no_portfolio"
+    ]
+  },
+  "labeler": "synthetic-cold-development-fixture",
+  "split": "development"
+}

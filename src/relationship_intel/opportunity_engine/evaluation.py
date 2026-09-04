@@ -130,6 +130,7 @@ def main() -> int:
     import argparse
 
     from relationship_intel.opportunity_engine.succession import SuccessionPack
+    from relationship_intel.opportunity_engine.succession_cold import SuccessionColdPack
     from relationship_intel.opportunity_engine.workflow_audit import WorkflowAuditPack
 
     parser = argparse.ArgumentParser(description="Evaluate generic Product Pack gold fixtures")
@@ -137,6 +138,7 @@ def main() -> int:
     args = parser.parse_args()
     registry = PackRegistry()
     registry.register(SuccessionPack())
+    registry.register(SuccessionColdPack())
     registry.register(WorkflowAuditPack())
     try:
         report = run_gold_evaluation(args.source, registry)
