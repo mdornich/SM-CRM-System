@@ -104,6 +104,20 @@ def test_intake_lead_command_queues_valid_json(tmp_path):
     assert summary["by_status"]["pending"] == 2
 
 
+def test_intake_lead_rejects_an_invalid_record_without_a_traceback(tmp_path):
+    record = tmp_path / "lead.json"
+    record.write_text(json.dumps({"name": "Ada Lovelace", "wedge": "Investor"}))
+
+    result = _run(["intake-lead", str(record)], tmp_path)
+
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "Invalid lead record" in result.stderr
+
+    queue = _run(["review-queue", "--json"], tmp_path)
+    assert json.loads(queue.stdout)["count"] == 0
+
+
 def test_unknown_crm_choice_is_an_argparse_error(tmp_path):
     result = _run(["sync-crm", "--crm", "salesforce"], tmp_path)
     assert result.returncode == 2

@@ -1,21 +1,27 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
 from pydantic import ValidationError
 
 from relationship_intel import pipeline
-from relationship_intel.cold_intake import QualifiedLead, intake_qualified_lead
+from relationship_intel.cold_intake import (
+    QualifiedLead,
+    intake_qualified_lead,
+    load_qualified_lead,
+)
 from relationship_intel.crm.base import AdapterStatus, CRMRef
 from relationship_intel.crm.sync import sync_to_crm
+from relationship_intel.extraction.schemas import Company, Person
 from relationship_intel.opportunity_engine.schema import SCHEMA_V2
 from relationship_intel.review import _handle_item, _render_payload_fields
 from relationship_intel.store.db import SCHEMA, connect
 from relationship_intel.store.repository import Repository
 
 
-def _lead(**updates) -> QualifiedLead:
+def _lead_data(**updates) -> dict:
     data = {
         "twenty_person_id": "twenty-1",
         "prospect_id": "prospect-1",
@@ -30,7 +36,11 @@ def _lead(**updates) -> QualifiedLead:
         "pack_version_id": "pack-v4",
     }
     data.update(updates)
-    return QualifiedLead.model_validate(data)
+    return data
+
+
+def _lead(**updates) -> QualifiedLead:
+    return QualifiedLead.model_validate(_lead_data(**updates))
 
 
 def _repo(tmp_path) -> Repository:
@@ -159,11 +169,19 @@ def test_external_id_beats_name_and_email_fallbacks(tmp_path):
     ],
 )
 def test_invalid_record_is_rejected_before_any_write(tmp_path, updates, message):
+    # Go through the real CLI entry point. Calling `_lead(**updates)` inline
+    # would raise while building the argument, so intake would never be
+    # reached and the "no writes" assertions below would be vacuous.
     repo = _repo(tmp_path)
+    record = tmp_path / "lead.json"
+    record.write_text(json.dumps(_lead_data(**updates)))
+
     with pytest.raises(ValidationError, match=message):
-        intake_qualified_lead(repo, _lead(**updates))
+        intake_qualified_lead(repo, load_qualified_lead(record))
+
     assert repo.conn.execute("SELECT count(*) FROM people").fetchone()[0] == 0
     assert repo.conn.execute("SELECT count(*) FROM companies").fetchone()[0] == 0
+    assert repo.conn.execute("SELECT count(*) FROM crm_review_items").fetchone()[0] == 0
 
 
 class _UpdateOnlyAdapter:
@@ -248,3 +266,85 @@ def test_reviewed_cold_lead_updates_existing_twenty_person_never_creates(setting
     assert len(adapter.updates) == 1
     assert adapter.updates[0][0] == CRMRef("twenty", "person", "twenty-1")
     assert adapter.updates[0][1]["wedge"] == ["EOS_PRACTITIONER"]
+
+
+def test_intake_fills_gtm_keys_on_a_person_the_pipeline_already_queued(tmp_path):
+    """A qualified cold lead usually resolves to somebody already in the queue.
+
+    That pre-existing row's payload has no GTM keys and no `existing_crm_ref`.
+    Skipping the write dropped all of them, so approval fell through to
+    `find_or_create_contact` and created a duplicate Twenty person — the exact
+    outcome this intake path exists to prevent.
+    """
+    repo = _repo(tmp_path)
+    company_id, _ = repo.resolve_company(Company(name="Analytical Engines LLC"))
+    person_id, _ = repo.resolve_person(
+        Person(name="Ada Lovelace", email="ada@analyticalengines.example"), company_id
+    )
+    repo.upsert_review_item(
+        "person",
+        person_id,
+        "Ada Lovelace",
+        {"name": "Ada Lovelace", "email": "ada@analyticalengines.example", "title": None},
+    )
+
+    result = intake_qualified_lead(repo, _lead(email="ada@analyticalengines.example"))
+
+    assert result["person_id"] == person_id
+    assert result["review_item"] == "updated"
+    item = repo.review_item("person", person_id)
+    assert item is not None
+    assert item.payload["wedge"] == ["EOS_PRACTITIONER"]
+    assert item.payload["lifecycle_stage"] == "COLD"
+    assert item.payload["proof_pointers"] == ["pack://eos/ada#qualification"]
+    assert item.payload["existing_crm_ref"]["crm_id"] == "twenty-1"
+    # Pre-existing reviewer-visible values are never overwritten.
+    assert item.payload["email"] == "ada@analyticalengines.example"
+
+    # ...and the merge stays idempotent on a repeat intake.
+    before = _dump(repo)
+    assert (
+        intake_qualified_lead(repo, _lead(email="ada@analyticalengines.example"))["review_item"]
+        == "unchanged"
+    )
+    assert _dump(repo) == before
+
+
+def test_intake_replaces_a_crm_ref_flattened_by_an_older_form_round_trip(tmp_path):
+    repo = _repo(tmp_path)
+    company_id, _ = repo.resolve_company(Company(name="Analytical Engines LLC"))
+    person_id, _ = repo.resolve_person(Person(name="Ada Lovelace"), company_id)
+    repo.upsert_review_item(
+        "person",
+        person_id,
+        "Ada Lovelace",
+        {"name": "Ada Lovelace", "existing_crm_ref": "{'crm_id': 'stale'}"},
+    )
+
+    intake_qualified_lead(repo, _lead())
+
+    item = repo.review_item("person", person_id)
+    assert item is not None
+    assert item.payload["existing_crm_ref"] == {
+        "provider": "twenty",
+        "object_type": "person",
+        "crm_id": "twenty-1",
+    }
+
+
+def test_review_form_shows_wedge_and_proof_without_offering_them_back(tmp_path):
+    repo = _repo(tmp_path)
+    result = intake_qualified_lead(repo, _lead())
+    item = repo.review_item("person", result["person_id"])
+    assert item is not None
+
+    rendered = _render_payload_fields(item.payload)
+
+    # Visible to the human gate...
+    assert "EOS_PRACTITIONER" in rendered
+    assert "pack://eos/ada#qualification" in rendered
+    # ...but never as form inputs that would flatten on save.
+    assert 'name="value__wedge"' not in rendered
+    assert 'name="value__proof_pointers"' not in rendered
+    assert 'value="wedge"' not in rendered
+    assert 'value="proof_pointers"' not in rendered

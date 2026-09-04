@@ -185,6 +185,11 @@ def _home_url(
 
 
 _SYSTEM_PAYLOAD_KEYS = frozenset({"existing_crm_ref", "proof_pointers", "wedge"})
+# System keys the reviewer must still be able to SEE. Approving a cold lead IS
+# the human gate on its wedge and proof pointers, so hiding them outright meant
+# approving blind. These render as static text — no `field`/`value__` inputs, so
+# nothing round-trips through `_payload_from_form` and flattens.
+_DISPLAY_ONLY_PAYLOAD_KEYS = frozenset({"proof_pointers", "wedge"})
 
 
 def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
@@ -609,6 +614,8 @@ def _render_payload_fields(payload: dict, compact: bool = False) -> str:
         # never be rendered as editable text — they'd round-trip through
         # the form as strings and crash later renders.
         if key in _SYSTEM_PAYLOAD_KEYS:
+            if key in _DISPLAY_ONLY_PAYLOAD_KEYS:
+                rows.append(_render_static_field(key, payload[key], compact))
             continue
         value = payload[key]
         label = FIELD_LABELS.get(key, _human_label(key))
@@ -633,6 +640,20 @@ def _render_payload_fields(payload: dict, compact: bool = False) -> str:
                 f'value="{html.escape(value_text)}" {"readonly" if readonly else ""}></div>'
             )
     return "\n".join(rows)
+
+
+def _render_static_field(key: str, value, compact: bool = False) -> str:
+    """Show a system payload key without offering it back to the form."""
+    label = FIELD_LABELS.get(key, _human_label(key))
+    if isinstance(value, (list, tuple)):
+        text = ", ".join(str(item) for item in value)
+    else:
+        text = "" if value is None else str(value)
+    return (
+        f'<div class="field{" compact" if compact else ""}">'
+        f"<label>{html.escape(label)}</label>"
+        f'<p class="static-value">{html.escape(text) or "&mdash;"}</p></div>'
+    )
 
 
 def _ordered_keys(payload: dict) -> list[str]:
@@ -936,6 +957,14 @@ def _css() -> str:
     textarea {
       min-height: 104px;
       resize: vertical;
+    }
+    .static-value {
+      margin: 0;
+      padding: 8px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: #f6f8fb;
+      overflow-wrap: anywhere;
     }
     .wide { grid-column: 1 / -1; }
     .empty {

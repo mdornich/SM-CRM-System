@@ -329,12 +329,26 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "intake-lead":
             from relationship_intel.cold_intake import intake_qualified_lead, load_qualified_lead
 
-            lead = load_qualified_lead(args.record)
+            try:
+                lead = load_qualified_lead(args.record)
+            except (OSError, ValueError) as exc:
+                # The record is hand-authored JSON, so a bad wedge or a missing
+                # proof pointer is the expected failure here — report it rather
+                # than dumping a pydantic traceback. ValidationError subclasses
+                # ValueError, which also covers malformed JSON.
+                if args.json_output:
+                    _print_json({"error": "invalid_record", "message": str(exc)})
+                else:
+                    print(f"Invalid lead record {args.record}: {exc}", file=sys.stderr)
+                return 2
             result = intake_qualified_lead(pipeline.open_repo(settings), lead)
             if args.json_output:
                 _print_json(result)
             else:
-                print(f"Queued cold lead {lead.name} as person {result['person_id']}")
+                print(
+                    f"Queued cold lead {lead.name} as person {result['person_id']} "
+                    f"(review item {result['review_item']})"
+                )
 
         elif args.command == "sync-crm":
             stats = pipeline.run_sync(settings, args.crm)

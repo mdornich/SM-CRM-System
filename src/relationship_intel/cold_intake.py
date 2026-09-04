@@ -88,11 +88,46 @@ def intake_qualified_lead(repo: Repository, lead: QualifiedLead) -> dict:
         "pack_version_id": lead.pack_version_id,
         "existing_crm_ref": existing_ref,
     }
-    if repo.review_item("person", person_id) is None:
-        repo.upsert_review_item("person", person_id, lead.name, payload)
+    review_state = _queue_review_item(repo, person_id, lead.name, payload)
     return {
         "company_id": company_id,
         "company_created": company_created,
         "person_id": person_id,
         "person_created": person_created,
+        "review_item": review_state,
     }
+
+
+def _queue_review_item(repo: Repository, person_id: int, label: str, payload: dict) -> str:
+    """Queue the cold-lead payload without ever clobbering a reviewer's edits.
+
+    A qualified cold lead frequently resolves to somebody the pipeline has
+    already queued from a transcript. That row's payload carries none of the
+    GTM keys, and `upsert_review_item` deliberately leaves `payload_json`
+    alone on conflict — so simply skipping the write dropped `wedge`,
+    `lifecycle_stage`, `proof_pointers` AND `existing_crm_ref` on the floor.
+    Losing the ref is the damaging half: without it `sync` falls through to
+    `find_or_create_contact` and creates a duplicate Twenty person, which is
+    the exact outcome this intake path exists to prevent.
+
+    So merge in only the keys the stored payload does not already answer. A
+    repeated intake finds every key populated and writes nothing, which keeps
+    the operation idempotent and leaves reviewer corrections intact.
+    """
+    existing = repo.review_item("person", person_id)
+    if existing is None:
+        repo.upsert_review_item("person", person_id, label, payload)
+        return "created"
+    updates = {
+        key: value
+        for key, value in payload.items()
+        if value is not None and existing.payload.get(key) is None
+    }
+    if not isinstance(existing.payload.get("existing_crm_ref"), dict):
+        # A ref flattened to a string by an older form round-trip is unusable
+        # to `_resolve_person_ref`; replace it with the authoritative one.
+        updates["existing_crm_ref"] = payload["existing_crm_ref"]
+    if not updates:
+        return "unchanged"
+    repo.merge_review_item_payload("person", person_id, updates)
+    return "updated"
