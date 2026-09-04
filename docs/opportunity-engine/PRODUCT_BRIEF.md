@@ -1,4 +1,4 @@
-# Product Brief: 980labs Opportunity Engine
+# Product Brief: Opportunity Engine
 
 ## Problem and thesis
 

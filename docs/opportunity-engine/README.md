@@ -1,4 +1,4 @@
-# 980labs Opportunity Engine
+# Opportunity Engine
 
 Status: additive foundation and proposed target architecture, 2026-09-04.
 Reconciled against SM-CRM-System commit `98f16f12c02d5c3fa9001bd775b662d0d5e5824c`.

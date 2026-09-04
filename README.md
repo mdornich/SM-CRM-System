@@ -1,101 +1,158 @@
-# SM-CRM-System
+# Opportunity Engine
 
-Stable Mischief's **relationship-intelligence pipeline**: meeting transcripts in →
-evidence-backed intelligence notes (Obsidian), operational CRM records (Twenty),
-and an actionable beginning-of-week follow-up plan out.
+**A lead is an entity. An opportunity is an evidence-backed commercial hypothesis.**
 
-- **Obsidian vault** = film room & evidence locker (transcripts, intelligence cards, audit trail)
-- **Twenty CRM** = field & scoreboard (contacts, companies, opportunities, tasks)
-- **This pipeline** = coach (extraction, classification, planning, drafting)
+Opportunity Engine turns business evidence into reviewable commercial hypotheses for
+multiple products. It shares account and person identity, source evidence, and observations;
+Product Packs supply the criteria and interpretation for each offering.
 
-Spec: [`docs/architecture.md`](docs/architecture.md) · Source contract:
-[`docs/build-prompt.md`](docs/build-prompt.md) · First use case: Succession
-pipeline for James Whitfield.
+For example, the same firm could be a candidate for succession advice and a workflow
+automation audit. Those are separate hypotheses, supported by shared evidence—not one
+lead record with a single product score.
 
-**Phase 0 status:** the pipeline runs end-to-end with a **deterministic mock
-extractor** (`llm_provider: mock` is stamped on every artifact — plumbing is
-proven, extraction quality is Phase 1), plus optional **Codex CLI** or
-**Anthropic** extraction backends for real transcript trials. The default CRM is
-mock; the Twenty REST adapter ships and can sync live records when configured.
+**Succession is Product Pack #1.** The existing transcript-to-relationship-intelligence
+pipeline remains the working default while the generic foundation is introduced additively.
+The repository is still named `SM-CRM-System`, and the Python package and CLI remain
+`relationship_intel`.
 
-## Quick start
+[Product Brief](docs/opportunity-engine/PRODUCT_BRIEF.md) ·
+[PRD](docs/opportunity-engine/PRD.md) ·
+[Architecture & migration](docs/opportunity-engine/ARCHITECTURE_MIGRATION.md) ·
+[Full design package](docs/opportunity-engine/README.md)
+
+## What works today
+
+| Area | Current capability |
+|---|---|
+| Transcript workflow | Local-file and Granola intake, evidence-backed extraction, deterministic entity resolution, and duplicate detection |
+| Human review | Review queue/UI, reviewer corrections, and approval-gated CRM sync |
+| CRM and archive | Twenty API adapter, mock CRM, Obsidian/Cairns evidence archive, and reviewed memory-promotion proposals |
+| Planning | Weekly follow-up plans, drafts, feedback, deterministic queries, and Contract-1 reports for 980labsOS |
+| Generic foundation | Versioned products/packs, neutral evidence and observations, product signals, and multiple hypotheses per account/person |
+| Compatibility | Explicit projection of supported legacy Succession profiles into generic shadow state |
+| Evaluation | Existing transcript evaluation plus a generic gold-set format and two Product Pack implementations |
+
+The generic foundation is **opt-in**. Opening the store creates additive `oe_*` tables;
+the default transcript workflow still uses its existing models. Generic hypotheses are
+not automatically backfilled, rendered into the archive, exported to Twenty, or added
+to weekly plans. They begin as unreviewed hypotheses, with no approval-transition API.
+
+The second pack, **Workflow Automation Audit**, is a synthetic architecture fixture for
+20–250 employee professional-services firms. It exercises a different ICP and signal set;
+it is not an approved commercial offering. Mock extraction and synthetic evaluation prove
+software behavior, not real-world extraction accuracy or commercial qualification quality.
+
+## How it fits together
+
+```text
+Source evidence → Neutral observations → Product Pack interpretation
+                                              ↓
+                                      Product-specific signals
+                                              ↓
+                                   Evidence-backed hypotheses
+                                              ↓
+                           Human validation and engagement (next)
+```
+
+- **Opportunity Engine** owns commercial identity, evidence, observations, signals,
+  hypotheses, qualification, and the future engagement/learning workflow. Deterministic
+  code owns canonical writes, identity resolution, score arithmetic, and transition rules.
+- **Product Packs** own product-specific ICPs, exclusions, signals, evidence requirements,
+  scoring policies, and the eventual offers, stakeholder maps, and messaging policies.
+- **Twenty** is the human-facing CRM and system of engagement, accessed through supported
+  APIs. It receives approved operational records and summaries from the existing pipeline.
+- **SQLite** holds canonical operational state. **Obsidian/Cairns** holds the evidence archive
+  and reviewed memory outputs.
+- **980labsOS** remains the control plane for task execution, model routing, permissions,
+  budgets, secrets, scheduling, and audit. Agents propose bounded research, extraction,
+  and synthesis; they do not directly mutate canonical state.
+
+The transition preserves the existing pipeline. There is no new outbound-send capability,
+external discovery/enrichment provider, or database-platform migration in this foundation.
+
+## Quick start: existing Succession workflow
+
+Use Python 3.11+ in a development checkout; CI uses Python 3.12.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-python -m relationship_intel.cli run-demo
+LLM_PROVIDER=mock CRM_PROVIDER=mock python -m relationship_intel.cli run-demo
 ```
 
-`run-demo` ingests the three sample transcripts, writes the vault, syncs the
-mock CRM, and generates the weekly plan. Then look at:
+With default development paths, the demo ingests three sample transcripts, writes the
+archive, attempts mock CRM sync under the configured review gate, and generates a weekly
+plan. `CRM_REVIEW_REQUIRED` defaults to `true`; pending items need approval before sync.
 
-| Artifact | Where |
+| Artifact | Default location |
 |---|---|
-| Obsidian vault | `output/obsidian-vault/relationship-intelligence/` (open in Obsidian: point a vault at `output/obsidian-vault`) |
-| Weekly plan (Markdown + JSON) | `.../weekly-plans/2026-Wnn-james-succession-plan.{md,json}` |
-| Contract-1 department report | `.../reports/CRM-YYYY-MM-DD.json` |
-| Canonical store (SQLite) | `output/relationship_intel.db` |
-| Mock CRM records | `output/mock_crm/*.json` |
+| Evidence archive | `output/obsidian-vault/relationship-intelligence/` |
+| Weekly plans | `output/obsidian-vault/relationship-intelligence/weekly-plans/` |
+| Contract-1 reports | `output/obsidian-vault/relationship-intelligence/reports/` |
+| SQLite operational store | `output/relationship_intel.db` |
+| Mock CRM output | `output/mock_crm/` |
 
-## Commands
+Generated state belongs under `output/` and is not committed. To inspect and approve the
+demo's CRM candidates, run `review-ui`, then `sync-crm --crm mock` after review.
+
+## Run the generic evaluation
 
 ```bash
-python -m relationship_intel.cli init                 # create store + vault skeleton
-python -m relationship_intel.cli ingest               # defaults to TRANSCRIPTS_INBOX_DIR
+python -m relationship_intel.opportunity_engine.evaluation --source examples/opportunity-engine
+```
+
+This evaluates six synthetic development cases across Succession and Workflow Audit without
+provider credentials. It reports classifications, signal expectations, score bounds, citation
+integrity, and signal precision/recall. Exit codes: `0` for passing expectations, `1` for failed
+expectations, and `2` for invalid input. It does not ingest into the operational store.
+
+The foundation's repository, pack registry, hypothesis service, and optional legacy projection
+are Python APIs. See the [Product Pack contract](docs/opportunity-engine/PRODUCT_PACK_CONTRACT.md)
+and [API contracts](docs/opportunity-engine/EVENT_API_CONTRACTS.md) for their boundaries.
+
+## Existing CLI commands
+
+```bash
+python -m relationship_intel.cli init
 python -m relationship_intel.cli ingest --source examples/transcripts
 python -m relationship_intel.cli ingest --source-type granola --created-after 2026-07-01
 python -m relationship_intel.cli review-queue --json
 python -m relationship_intel.cli review-ui --port 8765
-python -m relationship_intel.cli sync-crm --crm mock  # or --crm twenty (needs TWENTY_API_KEY)
-python -m relationship_intel.cli weekly-plan --owner James --week-start 2026-07-06
-python -m relationship_intel.cli report --week-start 2026-07-06
+python -m relationship_intel.cli sync-crm --crm mock
+python -m relationship_intel.cli weekly-plan --owner James
+python -m relationship_intel.cli report --json
 python -m relationship_intel.cli query who-to-call --json
 python -m relationship_intel.cli doctor --json
 python -m relationship_intel.cli eval --source redacted-evals --json
-python -m relationship_intel.cli run-demo
 ```
 
-Add `--json` to any command for machine-readable stdout. `query` supports
-`pipeline`, `last-touch`, and `who-to-call`; all read from SQLite without an LLM.
-`doctor` is a read-only go-live preflight for local paths, SQLite, LLM config,
-Granola key presence, Twenty reachability, and launchd setup.
-`eval` scores redacted transcript fixtures with `expected.profiles` frontmatter:
-`person_name`, `lead_type`, `timing_window`, `min_score`,
-`next_action_contains`, and `required_evidence`.
+CLI commands accept `--json` for structured output where applicable. `query` supports
+`pipeline`, `last-touch`, and `who-to-call`; these read SQLite without an LLM. `doctor`
+checks local configuration and configured service readiness. The existing `eval` command
+uses transcript fixtures with `expected.profiles` frontmatter; it remains separate from
+the generic evaluation above. Weekly plans use Monday as the start of the week.
 
-Configuration via `.env` (copy `.env.example`). Set `LLM_PROVIDER=codex` to run
-real transcript extraction through your local Codex CLI login; optionally set
-`CODEX_MODEL` (for example `gpt-5.4-mini`) to override the Codex CLI default.
-Use `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY` for direct Anthropic
-extraction; optionally set `ANTHROPIC_MODEL` to override the default
-`claude-sonnet-5` without a code change. Set `CRM_REVIEW_REQUIRED=true` for
-human-in-the-loop sync: `ingest` creates the review queue, `review-ui` lets a
-human approve/edit/reject CRM items, and `sync-crm` pushes only approved items.
-Weeks start **Monday**;
-`weekly-plan` defaults to the current week's Monday. For the local go-live setup,
-`TRANSCRIPTS_INBOX_DIR` should point at the vault's `transcripts-inbox` folder.
+## Configuration and deployment
 
-Daily automation is defined in
-`launchd/com.stablemischief.relationship-intel.daily.plist`; it runs
-`scripts/relationship-intel-daily.sh` at 7:30 AM, performing
-`init -> ingest -> review-queue`, plus `weekly-plan` on Mondays. Open
-`review-ui` to approve and sync CRM updates. Install with:
+For local development, copy `.env.example` to `.env` and choose explicit output paths.
+Mock is the default extraction and CRM provider. Optional extraction adapters support
+`LLM_PROVIDER=codex` with local CLI authentication, or `LLM_PROVIDER=anthropic` with
+`ANTHROPIC_API_KEY`; `CODEX_MODEL` and `ANTHROPIC_MODEL` provide model overrides.
+For live Twenty sync, configure the API URL/key and retain the review gate.
 
-```bash
-cp launchd/com.stablemischief.relationship-intel.daily.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.stablemischief.relationship-intel.daily.plist
-```
+The Mac mini deployment uses injected secrets rather than a `.env` file; its setup is below.
+Deployment and operational details live in:
 
-Before moving from sample POC data to real acceptance data, run
-`scripts/reset-local-output.sh --yes` to move generated local state to a
-timestamped backup. Twenty sample records still need to be removed manually in
-the Twenty UI; this pipeline intentionally has no delete path.
+- [Daily scheduling and review gate](docs/deployment/launchd-daily.md)
+- [Docker/Coolify deployment](docs/deployment/coolify.md)
+- [Twenty setup](docs/twenty-setup.md)
+- [Granola and local-file intake](docs/granola-ingestion.md)
+- [First real ingest checklist](docs/real-ingest-checklist.md)
 
-Fleet integration uses `scripts/fleet-crm-source-report.sh`, a read-only wrapper
-that emits the `report` command's Contract-1 JSON for the 980labsOS
-`crm-source` registry entry.
+`scripts/fleet-crm-source-report.sh` emits the current Contract-1 report for the 980labsOS
+`crm-source` integration. Generic hypotheses do not yet change that report.
 
 ## Mac mini review gate (980labsOS Phase 13A S1 §5.2)
 
@@ -149,22 +206,47 @@ launchctl list com.stablemischief.smcrm-reviewgate
 Logs land in `~/.980labsOS/smcrm/review-gate.{out,err}.log`. The job is
 registered in 980labsOS `docs/standards/recurring-job-routing.md`.
 
-## Tests & CI
+## Tests and CI
 
 ```bash
 ruff check . && ruff format --check . && pytest
 ```
 
-The suite includes three structural security tests: no outbound-send capability
-anywhere, no transcript content in logs, and CRM notes carry summaries + vault
-links but never evidence snippets.
+Shell entrypoint tests also require `zsh`; CI installs it explicitly. Tests cover the
+legacy CLI/demo, extraction, identity, review, CRM sync, archive preservation, planning,
+Contract-1, and deployment scripts. Foundation tests add evidence lineage, multiple products
+and episodes, immutable replay, atomic rollback, additive migration, and negative pack cases.
+Structural checks protect the no-send boundary and keep source evidence out of CRM notes/logs.
 
-## Docs
+See the [test and evaluation plan](docs/opportunity-engine/TEST_EVALUATION_PLAN.md) for
+recorded validation and the distinction between development fixtures and real acceptance data.
 
-- [`docs/architecture.md`](docs/architecture.md) — the governing spec (7 layers, ORD-0003 compliance, phasing)
-- [`docs/data-model.md`](docs/data-model.md) — schemas, enums, entity-resolution rules
-- [`docs/succession-lens.md`](docs/succession-lens.md) — the extraction lens and mock cue grammar
-- [`docs/obsidian-archive.md`](docs/obsidian-archive.md) — vault layout, managed sections, backups
-- [`docs/twenty-setup.md`](docs/twenty-setup.md) — connecting the real Twenty (port 3002, API key, stage mapping)
-- [`docs/granola-ingestion.md`](docs/granola-ingestion.md) — connecting real Granola (Phase 3 options)
-- [`docs/real-ingest-checklist.md`](docs/real-ingest-checklist.md) — first James transcript batch checklist
+## Next milestones
+
+1. Add neutral intake and a resumable, explicitly invoked shadow projection over existing transcripts.
+2. Validate attribution and qualification using independently labeled real examples from two products.
+3. Define generic lifecycle/review decisions and product-aware archive/CRM views.
+4. Consider budgeted discovery/enrichment providers only after the domain and second pack are proven.
+
+Production calibration, full lifecycle transitions, generic CRM export, cost accounting,
+and outreach/reply execution remain future work. Human approval remains the default for
+any future first-touch outbound capability.
+
+The north-star metric is **validated commercial opportunities discovered per unit of
+research + outreach cost**. It is not yet measured by the foundation.
+
+## Documentation
+
+Start with the [Opportunity Engine design index](docs/opportunity-engine/README.md).
+It links the Product Brief, PRD, migration plan, schema, Product Pack and event/API contracts,
+scoring/calibration spec, provider matrix, test plan, ADRs, open questions, and backlog.
+
+The existing pipeline's governing documents remain in place during reconciliation:
+
+- [Pipeline architecture](docs/architecture.md) and [source contract](docs/build-prompt.md)
+- [Existing data model](docs/data-model.md) and [Succession lens](docs/succession-lens.md)
+- [Obsidian/Cairns archive](docs/obsidian-archive.md)
+
+For implementation sequencing and unresolved decisions, use the
+[backlog](docs/opportunity-engine/IMPLEMENTATION_BACKLOG.md) and
+[open questions](docs/opportunity-engine/OPEN_QUESTIONS.md).

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "workflow-small",
+  "pack_version_id": "workflow-audit:fixture-v1",
+  "evidence": [
+    {
+      "id": "e0",
+      "source_type": "synthetic-interview",
+      "source_ref": "workflow-small",
+      "content_hash": "910b14ab1fdc5eb79c09048eeb98879ca0a5ae536015cc784bf5d690e4653622",
+      "locator": "paragraph:1",
+      "excerpt": "We have 8 employees.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    },
+    {
+      "id": "e1",
+      "source_type": "synthetic-interview",
+      "source_ref": "workflow-small",
+      "content_hash": "c3450b570f9a7f75192502c0cc0d1eabe59c216d0b85eb009b2031a91e449efa",
+      "locator": "paragraph:2",
+      "excerpt": "We are a professional-services firm.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    },
+    {
+      "id": "e2",
+      "source_type": "synthetic-interview",
+      "source_ref": "workflow-small",
+      "content_hash": "94ed8b2b2de8199c5d0a954df7cd8e4af17075f57fb2bddc3387389364999ba9",
+      "locator": "paragraph:3",
+      "excerpt": "Our team spends 12 hours a week manually copying records.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    }
+  ],
+  "observations": [
+    {
+      "id": "o0",
+      "account_id": 1,
+      "evidence_id": "e0",
+      "predicate": "employee_count",
+      "value": 8,
+      "method": "synthetic-human-label",
+      "confidence": 1
+    },
+    {
+      "id": "o1",
+      "account_id": 1,
+      "evidence_id": "e1",
+      "predicate": "industry",
+      "value": "professional_services",
+      "method": "synthetic-human-label",
+      "confidence": 1
+    },
+    {
+      "id": "o2",
+      "account_id": 1,
+      "evidence_id": "e2",
+      "predicate": "manual_hours_week",
+      "value": 12,
+      "method": "synthetic-human-label",
+      "confidence": 1
+    }
+  ],
+  "expected": {
+    "classification": "rejected_fit",
+    "eligible": false,
+    "signal_keys": []
+  },
+  "labeler": "synthetic-architecture-fixture",
+  "split": "development"
+}
