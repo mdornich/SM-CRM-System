@@ -96,6 +96,13 @@ def test_intake_lead_command_queues_valid_json(tmp_path):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["person_created"] is True
 
+    queue = _run(["review-queue", "--json"], tmp_path)
+    assert queue.returncode == 0, queue.stderr
+    summary = json.loads(queue.stdout)
+    # The existing queue rebuild also proposes the newly resolved company.
+    assert summary["count"] == 2
+    assert summary["by_status"]["pending"] == 2
+
 
 def test_unknown_crm_choice_is_an_argparse_error(tmp_path):
     result = _run(["sync-crm", "--crm", "salesforce"], tmp_path)

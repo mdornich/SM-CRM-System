@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from pydantic import ValidationError
 
 from relationship_intel.cold_intake import QualifiedLead, intake_qualified_lead
 from relationship_intel.crm.base import AdapterStatus, CRMRef
 from relationship_intel.crm.sync import sync_to_crm
-from relationship_intel.store.db import connect
+from relationship_intel.opportunity_engine.schema import SCHEMA_V2
+from relationship_intel.store.db import SCHEMA, connect
 from relationship_intel.store.repository import Repository
 
 
@@ -69,6 +72,64 @@ def test_intake_creates_crosswalk_pending_item_and_is_idempotent(tmp_path):
     reviewed = _dump(repo)
     intake_qualified_lead(repo, _lead())
     assert _dump(repo) == reviewed
+
+
+def test_intake_migration_preserves_populated_legacy_database_dump(tmp_path):
+    path = tmp_path / "legacy.db"
+    external_id_ddl = """CREATE TABLE IF NOT EXISTS people_external_ids (
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    UNIQUE(provider, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_people_external_ids_person
+ON people_external_ids(person_id);
+
+"""
+    legacy = sqlite3.connect(path)
+    legacy.executescript(SCHEMA.replace(external_id_ddl, ""))
+    legacy.executescript(SCHEMA_V2)
+    legacy.execute("INSERT INTO companies (id, name, normalized_name) VALUES (1, 'Old', 'old')")
+    legacy.execute(
+        "INSERT INTO people (id, name, normalized_name, company_id) "
+        "VALUES (1, 'Old Person', 'old person', 1)"
+    )
+    legacy.execute(
+        "INSERT INTO opportunities (id, name, person_id, company_id, stage, lead_type) "
+        "VALUES (1, 'Old Opportunity', 1, 1, 'new', 'warm')"
+    )
+    legacy.execute(
+        "INSERT INTO crm_sync_state "
+        "(id, provider, object_type, local_id, crm_id, last_pushed_hash) "
+        "VALUES (1, 'mock', 'person', 1, 'mock-1', 'old-hash')"
+    )
+    legacy.execute(
+        "INSERT INTO crm_review_items "
+        "(id, object_type, local_id, label, status, payload_json) "
+        "VALUES (1, 'person', 1, 'Old Person', 'approved', '{}')"
+    )
+    legacy.commit()
+    before = list(legacy.iterdump())
+    legacy.close()
+
+    repo = Repository(connect(path))
+    intake_qualified_lead(repo, _lead())
+    after = list(repo.conn.iterdump())
+
+    added_row_prefixes = (
+        'INSERT INTO "companies" VALUES(2,',
+        'INSERT INTO "people" VALUES(2,',
+        'INSERT INTO "crm_sync_state" VALUES(2,',
+        'INSERT INTO "crm_review_items" VALUES(2,',
+    )
+    after_without_additions = [
+        statement
+        for statement in after
+        if "people_external_ids" not in statement and not statement.startswith(added_row_prefixes)
+    ]
+    assert after_without_additions == before
+    assert not repo.conn.execute("PRAGMA foreign_key_check").fetchall()
 
 
 def test_external_id_beats_name_and_email_fallbacks(tmp_path):
