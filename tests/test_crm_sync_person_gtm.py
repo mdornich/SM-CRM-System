@@ -119,3 +119,25 @@ def test_successful_gtm_write_does_not_increment_the_failure_counter():
     stats = {"gtm_write_failed": 0}
     _resolve_person_ref(_RecordingAdapter(), _payload(source="warm-james"), stats)
     assert stats["gtm_write_failed"] == 0
+
+
+@pytest.mark.parametrize(
+    "payload_extra",
+    [
+        {"wedge": None},
+        {"wedge": None, "source": None, "lifecycle_stage": None, "wedge_primary": None},
+    ],
+)
+def test_all_none_gtm_keys_do_not_trigger_an_update_round_trip(payload_extra):
+    """Finding 2: has_person_gtm_fields tested key PRESENCE while the body
+    builder skips None, so a `wedge: None` payload fired a whole update call
+    (a live GET on the bare-ref path included) that wrote nothing."""
+    adapter = _RecordingAdapter()
+    _resolve_person_ref(adapter, _payload(**payload_extra), {"gtm_write_failed": 0})
+    assert adapter.updates == []
+
+
+def test_a_real_value_alongside_none_keys_still_writes():
+    adapter = _RecordingAdapter()
+    _resolve_person_ref(adapter, _payload(wedge=None, source="warm-james"), {"gtm_write_failed": 0})
+    assert len(adapter.updates) == 1

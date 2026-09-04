@@ -111,6 +111,12 @@ carries on the mini (values read live, GET only, 2026-09-03):
   the current tags and merges (server order first, then anything new), skipping
   the write when it would add nothing. Consequence: **a sync can never remove a
   wedge tag** — do that in the Twenty UI.
+- **The guards fail closed.** `lifecycleStage` and `wedge` both depend on
+  Twenty's current value. If that value can't be read (404, permission error,
+  envelope change) the adapter **skips those two fields and logs why** rather
+  than guessing from empty state — guessing would let an arbitrary stage
+  regression through and would PATCH a wedge array that drops every human-added
+  tag. `source` and `wedgePrimary` need no server state and still write.
 - A GTM write that fails on an already-matched contact is contained per record
   and counted in the sync stats as `gtm_write_failed`; the person still syncs and
   its notes/tasks still land.

@@ -215,6 +215,10 @@ PERSON_SELECT_FIELDS = {
 }
 PERSON_MULTI_SELECT_FIELDS = {"wedge": ("wedge", WEDGE_VALUES)}
 PERSON_TEXT_FIELDS = {"source": "source"}
+# Fields whose write depends on Twenty's current value: the §4 forward-only
+# stage guard and the additive wedge merge. Both must fail closed when that
+# current value cannot be read.
+_GUARDED_PERSON_FIELDS = ("lifecycleStage", "wedge")
 
 _NON_IDENT = re.compile(r"[^0-9A-Za-z]+")
 
@@ -287,8 +291,12 @@ PERSON_GTM_KEYS = (
 
 
 def has_person_gtm_fields(person: dict) -> bool:
-    """True when the payload carries at least one of the four GTM Person keys."""
-    return not PERSON_GTM_KEYS.isdisjoint(person)
+    """True when the payload carries at least one of the four GTM Person keys
+    with a non-None value. Presence alone is not enough: `person_custom_field_body`
+    skips None, so a payload carrying only `wedge: None` would otherwise trigger
+    a whole update round-trip — including a live GET on the bare-ref path — that
+    writes nothing."""
+    return any(person.get(key) is not None for key in PERSON_GTM_KEYS)
 
 
 def lifecycle_is_forward(current: str | None, proposed: str) -> bool:
@@ -560,7 +568,25 @@ class TwentyCRMAdapter(CRMAdapter):
         backwards.
         """
         body = dict(custom_fields)
-        current = self._current_person_state(existing, body)
+        guarded = [name for name in _GUARDED_PERSON_FIELDS if name in body]
+        current = self._current_person_state(existing, guarded)
+        if guarded and current is None:
+            # Fail CLOSED. Running a guard on empty state is worse than not
+            # writing: lifecycle_is_forward(None, x) would allow an arbitrary
+            # regression, and the wedge merge would see no server tags and PATCH
+            # a replacement array that drops every human-added one — exactly what
+            # both guards exist to prevent. The unguarded fields still write.
+            logger.warning(
+                "twenty could not read current state for person %s; skipping guarded "
+                "field(s) %s — writing them blind could overwrite a manual edit",
+                existing["id"],
+                ", ".join(guarded),
+            )
+            for name in guarded:
+                body.pop(name)
+            current = {}
+        elif current is None:
+            current = {}
         proposed = body.get("lifecycleStage")
         if proposed is not None:
             current_stage = current.get("lifecycleStage")
@@ -597,16 +623,21 @@ class TwentyCRMAdapter(CRMAdapter):
             self._request("PATCH", f"/people/{existing['id']}", json=body)
         return self._ref("person", existing)
 
-    def _current_person_state(self, existing: dict, body: dict) -> dict:
-        """Twenty's current values for the guarded fields. A record read through
-        `_find_one` usually carries them; a bare {"id": ...} (the
-        update_contact_gtm_fields path) needs one extra read-only lookup — the
-        guards must never run blind. Only fetches when a guarded field is being
-        written and the record doesn't already carry it."""
-        guarded = [name for name in ("lifecycleStage", "wedge") if name in body]
-        if not guarded or all(name in existing for name in guarded):
+    def _current_person_state(self, existing: dict, guarded: list[str]) -> dict | None:
+        """Twenty's current values for the guarded fields, or None when they
+        cannot be read. A record from `_find_one` usually carries them; a bare
+        {"id": ...} (the update_contact_gtm_fields path) needs one extra
+        read-only lookup. Returning None — rather than an empty dict — is what
+        lets the caller fail closed instead of running a guard blind."""
+        if not guarded:
             return existing
-        return self._get_person(existing["id"]) or existing
+        if all(name in existing for name in guarded):
+            return existing
+        try:
+            return self._get_person(existing["id"])
+        except httpx.HTTPError as exc:
+            logger.info("twenty person read failed for %s: %s", existing["id"], type(exc).__name__)
+            return None
 
     def _get_person(self, person_id: str) -> dict | None:
         """GET /rest/people/{id}. Envelope is {"data": {"person": {...}}} —

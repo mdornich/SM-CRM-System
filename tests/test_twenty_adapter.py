@@ -939,3 +939,100 @@ def test_no_extra_read_when_only_unguarded_fields_are_written():
         {"name": "Bob Smith", "email": "bob@x.com", "source": "warm-james"}
     )
     assert [c.method for c in calls] == ["GET", "PATCH"]  # the dedup lookup, then the write
+
+
+# --- PR #18 review round 4 ----------------------------------------------------
+
+
+def _unreadable_person_handler(calls, *, status=404):
+    """GET /people/{id} fails; the list lookup still matches a bare record."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET" and request.url.path.startswith("/rest/people/"):
+            return httpx.Response(status, json={"error": "nope"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"people": [{"id": "p-9"}]}})
+        return httpx.Response(200, json={"data": {"updatePerson": {"id": "p-9"}}})
+
+    return handler
+
+
+def test_lifecycle_write_is_skipped_when_current_state_cannot_be_read(caplog):
+    """Finding 1: falling back to the bare record made lifecycle_is_forward(None,
+    x) return True, writing an arbitrary regression on unreadable state."""
+    calls = []
+    with caplog.at_level(logging.WARNING):
+        _adapter(_unreadable_person_handler(calls)).find_or_create_contact(
+            {"name": "Bob Smith", "email": "bob@x.com", "lifecycle_stage": "Cold"}
+        )
+    assert not [c for c in calls if c.method == "PATCH"]
+    assert any("skipping guarded" in record.getMessage() for record in caplog.records)
+
+
+def test_wedge_write_is_skipped_when_current_state_cannot_be_read(caplog):
+    """Same failure for the merge: empty server_tags meant PATCHing a
+    replacement array that dropped every human-added tag."""
+    calls = []
+    with caplog.at_level(logging.WARNING):
+        _adapter(_unreadable_person_handler(calls)).find_or_create_contact(
+            {"name": "Bob Smith", "email": "bob@x.com", "wedge": ["Acquirer"]}
+        )
+    assert not [c for c in calls if c.method == "PATCH"]
+    assert any("skipping guarded" in record.getMessage() for record in caplog.records)
+
+
+def test_unguarded_fields_still_write_when_current_state_cannot_be_read():
+    """Failing closed applies to the guarded fields only — source and
+    wedgePrimary need no server state, so they must still land."""
+    calls = []
+    _adapter(_unreadable_person_handler(calls)).find_or_create_contact(
+        {
+            "name": "Bob Smith",
+            "email": "bob@x.com",
+            "source": "warm-james",
+            "wedge_primary": "Acquirer",
+            "lifecycle_stage": "Cold",
+            "wedge": ["Acquirer"],
+        }
+    )
+    patch = next(c for c in calls if c.method == "PATCH")
+    assert json.loads(patch.content) == {
+        "wedgePrimary": "ACQUIRER",
+        "source": "warm-james",
+    }
+
+
+def test_missing_person_envelope_also_fails_closed():
+    """A 200 whose envelope has no `person` key (a shape change) is unreadable
+    state too, not empty state."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET" and request.url.path.startswith("/rest/people/"):
+            return httpx.Response(200, json={"data": {}})
+        return httpx.Response(200, json={"data": {"updatePerson": {"id": "p-4"}}})
+
+    _adapter(handler).update_contact_gtm_fields(
+        CRMRef("twenty", "person", "p-4"), {"wedge": ["Acquirer"], "source": "referral"}
+    )
+    patch = next(c for c in calls if c.method == "PATCH")
+    assert json.loads(patch.content) == {"source": "referral"}
+
+
+def test_all_none_gtm_payload_raises_instead_of_round_tripping():
+    """Finding 2: presence-only gating let `{"wedge": None}` through to a full
+    update — including a live GET on the bare-ref path — that wrote nothing."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise AssertionError("no request may be issued")
+
+    with pytest.raises(ValueError, match="none of the GTM Person keys"):
+        _adapter(handler).update_contact_gtm_fields(
+            CRMRef("twenty", "person", "p-4"),
+            {"wedge": None, "source": None, "lifecycle_stage": None, "wedge_primary": None},
+        )
+    assert calls == []
