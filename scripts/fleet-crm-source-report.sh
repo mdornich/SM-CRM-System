@@ -1,12 +1,5 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-REPO_DIR="/Users/mitchdornich/Documents/GitHub/SM-CRM-System"
-cd "$REPO_DIR"
-
-set -a
-source .env
-set +a
-
-source .venv/bin/activate
+source "${0:A:h}/_repo-env.sh"
 python -m relationship_intel.cli report

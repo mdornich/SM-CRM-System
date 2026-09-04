@@ -97,6 +97,40 @@ Fleet integration uses `scripts/fleet-crm-source-report.sh`, a read-only wrapper
 that emits the `report` command's Contract-1 JSON for the 980labsOS
 `crm-source` registry entry.
 
+## Mac mini review gate (980labsOS Phase 13A S1 §5.2)
+
+The production checkout is on the **Mac mini** at
+`/Users/980macmini/Documents/GitHub/SM-CRM-System`, alongside Twenty
+(`http://127.0.0.1:3002`). Every shell entrypoint in `scripts/` resolves its repo
+root from its own location (`scripts/_repo-env.sh`), so the same scripts run on
+either machine.
+
+**There is no `.env` on the mini and none should be created.** Secrets are
+rendered by the 980labsOS 8D Infisical Agent and injected for one child process
+by `with-8d-env.sh`; `load_settings()` uses python-dotenv's `load_dotenv()`,
+which never overrides values already present in the environment. `.env` is
+sourced only when the file exists (the MacBook dev path).
+
+Run anything on the mini like this:
+
+```bash
+~/Documents/GitHub/980labsOS-deploy/scripts/with-8d-env.sh -- \
+  ~/Documents/GitHub/SM-CRM-System/.venv/bin/python -m relationship_intel.cli review-queue --json
+```
+
+The always-on review gate itself is
+`scripts/launchd/com.stablemischief.smcrm-reviewgate.plist` →
+`scripts/review-gate.sh` (re-execs through `with-8d-env.sh`, then serves
+`review-ui` on `127.0.0.1:8765`). Install on the mini with:
+
+```bash
+cp scripts/launchd/com.stablemischief.smcrm-reviewgate.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewgate.plist
+```
+
+Logs land in `~/.980labsOS/smcrm/review-gate.{out,err}.log`. The job is
+registered in 980labsOS `docs/standards/recurring-job-routing.md`.
+
 ## Tests & CI
 
 ```bash

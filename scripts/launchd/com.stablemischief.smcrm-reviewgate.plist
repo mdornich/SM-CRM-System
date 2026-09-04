@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.stablemischief.smcrm-reviewgate</string>
+
+    <!-- Phase 13A S1 §5.2. Mac mini paths: this job is the always-on review
+         gate on the mini (980macmini), not the MacBook Pro. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>/Users/980macmini/Documents/GitHub/SM-CRM-System/scripts/review-gate.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Back off between crashes so a config error doesn't spin-loop. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Logs live outside ~/Documents so launchd can write them under TCC. -->
+    <key>StandardOutPath</key>
+    <string>/Users/980macmini/.980labsOS/smcrm/review-gate.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/980macmini/.980labsOS/smcrm/review-gate.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/980macmini/Documents/GitHub/SM-CRM-System</string>
+</dict>
+</plist>
