@@ -4,7 +4,7 @@ Two LaunchAgents wire the pipeline so you never touch the terminal:
 
 | Agent | Runs | Purpose |
 |---|---|---|
-| `com.stablemischief.smcrm-reviewgate` | Continuously, from login | Serves the review UI at `http://127.0.0.1:8765/`. Restarts itself if it crashes. Bookmark the URL. Replaced `com.stablemischief.smcrm-reviewui` on 2026-09-03; both bound the same port, so only one may ever be loaded. |
+| `com.stablemischief.smcrm-reviewgate` | Continuously, from login | Serves the review UI at `http://127.0.0.1:8765/`. Restarts itself on a crash or a clean exit, but a configuration refusal (exit 78) stops the job rather than looping. Bookmark the URL. Replaced `com.stablemischief.smcrm-reviewui` on 2026-09-03; both bound the same port, so only one may ever be loaded. |
 | `com.stablemischief.smcrm-daily` | Once a day at 05:00 | Runs ingest → review-queue (+ weekly-plan on Mondays). Fires a macOS notification when items are waiting for review, so you know without having to check. |
 
 The review UI is where James approves records — Approve triggers push-on-approve

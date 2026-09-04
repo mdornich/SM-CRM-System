@@ -13,6 +13,7 @@ and a stub `python`, and asserts on what the stub was actually invoked with.
 from __future__ import annotations
 
 import os
+import plistlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -55,12 +56,44 @@ def build_sandbox(tmp_path: Path, *, env_file: str | None = None) -> Path:
     return repo
 
 
+# 980labsOS scripts/with-8d-env.sh, in the two places it is checked out.
+REAL_WRAPPERS = (
+    Path.home() / "Documents/GitHub/980labsOS-deploy/scripts/with-8d-env.sh",
+    Path.home() / "Documents/GitHub/980labsOS/scripts/with-8d-env.sh",
+)
+
+
+def find_real_wrapper() -> Path | None:
+    return next((w for w in REAL_WRAPPERS if w.is_file() and os.access(w, os.X_OK)), None)
+
+
 def make_wrapper(tmp_path: Path, *, executable: bool = True) -> Path:
-    """Stand-in for 980labsOS scripts/with-8d-env.sh: exec the child verbatim."""
+    """Stand-in for 980labsOS scripts/with-8d-env.sh.
+
+    It enforces the real wrapper's calling contract — `-- <cmd> <args...>`, with
+    the literal `--` as the first argument — so a caller that stops passing it
+    fails here rather than passing against a laxer stub than production.
+    """
     wrapper = tmp_path / "with-8d-env.sh"
-    wrapper.write_text('#!/bin/sh\nshift\nexec "$@"\n')
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        '[ "$1" = "--" ] || { echo "stub-wrapper: expected -- first, got: $1" >&2; exit 64; }\n'
+        "shift\n"
+        'exec "$@"\n'
+    )
     wrapper.chmod(0o755 if executable else 0o644)
     return wrapper
+
+
+def make_8d_env_file(tmp_path: Path, **values: str) -> Path:
+    """A file shaped the way the real wrapper insists on: regular file, owned by
+    us, mode 600, carrying the Agent Native OS marker line."""
+    path = tmp_path / "agent-native-os.env"
+    body = "export AGENT_NATIVE_OS_INFISICAL_ENV_LOADED=1\n"
+    body += "".join(f"export {k}={v}\n" for k, v in values.items())
+    path.write_text(body)
+    path.chmod(0o600)
+    return path
 
 
 def run_gate(repo: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -290,6 +323,81 @@ def test_arguments_reach_the_review_ui(tmp_path: Path) -> None:
         env={"SM_CRM_ENV_WRAPPED": "1", "SM_CRM_LOG_DIR": str(tmp_path / "logs")},
     )
     assert result.returncode == 0, result.stderr
+    args_line = next(ln for ln in result.stdout.splitlines() if ln.startswith("PYTHON_ARGS:"))
+    assert args_line.endswith("--port 9000"), args_line
+
+
+# --- fourth pass ------------------------------------------------------------
+
+
+def test_plist_does_not_infinitely_restart_a_configuration_refusal() -> None:
+    """`KeepAlive: <true/>` would respawn the exit-78 refusal every
+    ThrottleInterval forever, and the log it spams is the only evidence of why.
+
+    launchd ORs the KeepAlive dictionary keys and, finding no match, "falls back
+    on demand based invocation" — it stops. A non-zero exit matches neither
+    SuccessfulExit (exit 0 only) nor Crashed (signal deaths only), so the
+    refusal stops the job while genuine failures still come back.
+    """
+    plist_path = REPO_ROOT / "scripts/launchd/com.stablemischief.smcrm-reviewgate.plist"
+    plist = plistlib.loads(plist_path.read_bytes())
+
+    keep_alive = plist["KeepAlive"]
+    assert isinstance(keep_alive, dict), (
+        "KeepAlive must be a dictionary: <true/> restarts unconditionally, "
+        "including on the exit-78 configuration refusal."
+    )
+    assert keep_alive.get("SuccessfulExit") is True
+    assert keep_alive.get("Crashed") is True
+    # Any key that would match a plain non-zero exit reopens the loop.
+    assert "SuccessfulExit" in keep_alive and keep_alive["SuccessfulExit"] is not False
+
+
+def test_refusal_exit_code_is_not_restarted_by_the_plist(tmp_path: Path) -> None:
+    """Ties the script's actual refusal code to the plist policy, so changing
+    one without the other fails rather than silently reopening the loop."""
+    repo = build_sandbox(tmp_path, env_file="TWENTY_API_KEY=k\n")
+    wrapper = make_wrapper(tmp_path, executable=False)
+    result = run_gate(
+        repo,
+        env={"SM_CRM_ENV_WRAPPER": str(wrapper), "SM_CRM_LOG_DIR": str(tmp_path / "logs")},
+    )
+    plist = plistlib.loads(
+        (REPO_ROOT / "scripts/launchd/com.stablemischief.smcrm-reviewgate.plist").read_bytes()
+    )
+    keep_alive = plist["KeepAlive"]
+
+    assert result.returncode != 0, "a refusal must not exit 0, or SuccessfulExit restarts it"
+    assert isinstance(keep_alive, dict)
+    # Neither OR'd condition matches a plain non-zero exit, so launchd stops.
+    assert set(keep_alive) <= {"SuccessfulExit", "Crashed"}, (
+        f"unreviewed KeepAlive conditions may restart exit {result.returncode}: {set(keep_alive)}"
+    )
+
+
+@pytest.mark.skipif(find_real_wrapper() is None, reason="980labsOS with-8d-env.sh not checked out")
+def test_arguments_survive_the_real_8d_wrapper(tmp_path: Path) -> None:
+    """The documented `review-gate.sh --port 9000` goes through with-8d-env.sh,
+    so verify it against the real wrapper's `-- <cmd> <args>` contract rather
+    than only against a stub.
+    """
+    wrapper = find_real_wrapper()
+    assert wrapper is not None
+    repo = build_sandbox(tmp_path)
+    env_file = make_8d_env_file(tmp_path, TWENTY_API_KEY="from-wrapper")
+
+    result = run_gate(
+        repo,
+        "--port",
+        "9000",
+        env={
+            "SM_CRM_ENV_WRAPPER": str(wrapper),
+            "SM_CRM_LOG_DIR": str(tmp_path / "logs"),
+            "AGENT_NATIVE_OS_INFISICAL_ENV_FILE": str(env_file),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "TWENTY_API_KEY=from-wrapper" in result.stdout
     args_line = next(ln for ln in result.stdout.splitlines() if ln.startswith("PYTHON_ARGS:"))
     assert args_line.endswith("--port 9000"), args_line
 

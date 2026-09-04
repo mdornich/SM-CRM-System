@@ -125,7 +125,11 @@ The always-on review gate itself is
 `review-ui` on `127.0.0.1:8765`). It **refuses to start** (exit 78) when the
 wrapper is missing or `TWENTY_API_KEY` is empty, rather than coming up green
 backed by the mock CRM — an approval gate that gates nothing is worse than one
-that is down. It also creates its own log directory, because launchd creates the
+that is down. `KeepAlive` is a dictionary (`SuccessfulExit` + `Crashed`), not
+`<true/>`: launchd ORs those conditions and stops the job when neither matches,
+so a configuration refusal stays stopped instead of respawning every 10s
+forever, while a clean exit or a signal death still brings the gate back. After
+fixing the configuration, `launchctl kickstart -k gui/$(id -u)/com.stablemischief.smcrm-reviewgate`. It also creates its own log directory, because launchd creates the
 log file but not its parent.
 
 This plist **replaces `com.stablemischief.smcrm-reviewui.plist`**, removed in the

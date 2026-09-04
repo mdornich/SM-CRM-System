@@ -17,8 +17,27 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- KeepAlive is a DICTIONARY, not <true/>, and that distinction is the
+         whole point. launchd ORs these keys (launchd.plist(5)); if none of them
+         matches it "falls back on demand based invocation" — it stops the job.
+
+           SuccessfulExit=true  -> restart after a clean exit 0. A server that
+                                   returns 0 has ended unexpectedly; bring it back.
+           Crashed=true         -> restart after a signal death (SIGSEGV, SIGKILL,
+                                   OOM). Also unexpected; bring it back.
+
+         A non-zero exit matches NEITHER, so review-gate.sh's exit 78 —
+         "refusing to start, the config would give you a mock-backed gate" —
+         stops the job instead of respawning it every ThrottleInterval forever.
+         With <true/> a misconfigured mini would loop every 10s indefinitely and
+         the only evidence would be the log it is spamming. -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <true/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
 
     <!-- Back off between crashes so a config error doesn't spin-loop. -->
     <key>ThrottleInterval</key>
