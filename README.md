@@ -161,6 +161,8 @@ links but never evidence snippets.
 
 ## Docs
 
+- [`docs/opportunity-engine/README.md`](docs/opportunity-engine/README.md) — Opportunity Engine product brief, PRD, and additive migration design
+
 - [`docs/architecture.md`](docs/architecture.md) — the governing spec (7 layers, ORD-0003 compliance, phasing)
 - [`docs/data-model.md`](docs/data-model.md) — schemas, enums, entity-resolution rules
 - [`docs/succession-lens.md`](docs/succession-lens.md) — the extraction lens and mock cue grammar

@@ -91,3 +91,8 @@ permitted edge and forbidden shortcut, including suppression and changed approva
 Final canonical verification: **246 tests passed in 5.30 seconds** (226 existing plus 20 new),
 lint passed and all 75 Python files passed formatting. Generic evaluation: **6/6 development
 cases passed**. No provider calls or production data migrations were performed.
+
+After documentation PR #20 merged, the implementation was reapplied to `ebdba34` (including
+Mac mini review-gate PR #19). Reconciliation check: **262 tests passed in 9.80 seconds**;
+lint and formatting passed for all 76 Python files, and **6/6 generic development cases passed**.
+The added review-gate tests remain intact. This is local validation; hosted CI is a separate gate.
