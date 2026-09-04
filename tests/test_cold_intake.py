@@ -5,10 +5,12 @@ import sqlite3
 import pytest
 from pydantic import ValidationError
 
+from relationship_intel import pipeline
 from relationship_intel.cold_intake import QualifiedLead, intake_qualified_lead
 from relationship_intel.crm.base import AdapterStatus, CRMRef
 from relationship_intel.crm.sync import sync_to_crm
 from relationship_intel.opportunity_engine.schema import SCHEMA_V2
+from relationship_intel.review import _handle_item, _render_payload_fields
 from relationship_intel.store.db import SCHEMA, connect
 from relationship_intel.store.repository import Repository
 
@@ -204,17 +206,45 @@ class _UpdateOnlyAdapter:
         return AdapterStatus(True)
 
 
-def test_approved_cold_lead_updates_existing_twenty_person_never_creates(tmp_path):
-    repo = _repo(tmp_path)
+def test_reviewed_cold_lead_updates_existing_twenty_person_never_creates(settings):
+    repo = pipeline.open_repo(settings)
     result = intake_qualified_lead(repo, _lead())
     item = repo.review_item("person", result["person_id"])
     assert item is not None
-    repo.set_review_item("person", result["person_id"], "approved", item.payload)
+    rendered = _render_payload_fields(item.payload)
+    assert 'name="value__wedge"' not in rendered
+    assert 'name="value__proof_pointers"' not in rendered
+
+    # Exercise the existing review-UI save path before approval. Structured
+    # system payload values must survive rather than flattening to strings.
+    _handle_item(
+        settings,
+        {
+            "object_type": ["person"],
+            "local_id": [str(result["person_id"])],
+            "status": ["approved"],
+            "field": ["name", "source", "lifecycle_stage", "wedge_primary"],
+            "type__name": ["str"],
+            "value__name": [item.payload["name"]],
+            "type__source": ["str"],
+            "value__source": [item.payload["source"]],
+            "type__lifecycle_stage": ["str"],
+            "value__lifecycle_stage": [item.payload["lifecycle_stage"]],
+            "type__wedge_primary": ["str"],
+            "value__wedge_primary": [item.payload["wedge_primary"]],
+        },
+    )
+    reviewed = pipeline.open_repo(settings).review_item("person", result["person_id"])
+    assert reviewed is not None
+    assert reviewed.payload["wedge"] == ["EOS_PRACTITIONER"]
+    assert reviewed.payload["proof_pointers"] == ["pack://eos/ada#qualification"]
     adapter = _UpdateOnlyAdapter()
 
-    stats = sync_to_crm(repo, adapter, "James", approved_only=True)
+    stats = sync_to_crm(pipeline.open_repo(settings), adapter, "James", approved_only=True)
 
     assert stats["people"] == 1
+    assert stats["gtm_write_failed"] == 0
     assert adapter.creates == []
     assert len(adapter.updates) == 1
     assert adapter.updates[0][0] == CRMRef("twenty", "person", "twenty-1")
+    assert adapter.updates[0][1]["wedge"] == ["EOS_PRACTITIONER"]

@@ -184,7 +184,7 @@ def _home_url(
     return f"/{tail}{fragment}"
 
 
-_SYSTEM_PAYLOAD_KEYS = frozenset({"existing_crm_ref"})
+_SYSTEM_PAYLOAD_KEYS = frozenset({"existing_crm_ref", "proof_pointers", "wedge"})
 
 
 def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
@@ -195,10 +195,9 @@ def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
         raise ValueError(f"Unsupported status: {status}")
     payload = _payload_from_form(form)
     repo = open_repo(settings)
-    # Preserve non-user-editable keys (like the gh #15 `existing_crm_ref`
-    # dict). If we let those round-trip through the form they get flattened
-    # to strings and later renders crash — see the AttributeError this
-    # commit is fixing.
+    # Preserve non-user-editable structured keys. If we let those round-trip
+    # through the form they get flattened to strings and later consumers or
+    # renders fail.
     prior = repo.review_item(object_type, local_id)
     if prior:
         for key in _SYSTEM_PAYLOAD_KEYS:
@@ -606,7 +605,7 @@ def _render_review_item(
 def _render_payload_fields(payload: dict, compact: bool = False) -> str:
     rows = []
     for key in _ordered_keys(payload):
-        # System keys (dict-shaped enrichment stashed by the pipeline) must
+        # System keys (structured enrichment stashed by the pipeline) must
         # never be rendered as editable text — they'd round-trip through
         # the form as strings and crash later renders.
         if key in _SYSTEM_PAYLOAD_KEYS:
