@@ -1,0 +1,25 @@
+{
+  "budget_ref": "budget:fixture-zero",
+  "evidence": [
+    {
+      "captured_at": "2026-09-04T12:00:00Z",
+      "confidence": "high",
+      "content_hash": "1fd4d36e5ea6d662e6a4b78a475043c32bd420136b6e1f2f61d0057917ddc2c7",
+      "excerpt": "Public evidence",
+      "http_status": 200,
+      "idempotency_key": "evidence:v1:94da5a99e984a37dad222015bc46ceb371a20e683a26042f2a4739d5414b1ca5",
+      "method": "anonymous_http_get",
+      "person_id": "person-fetchable",
+      "source_ref": "https://public.example/profile",
+      "source_type": "eos_profile"
+    }
+  ],
+  "pipeline_version": "succession-enrichment-v0",
+  "receipts": [
+    {"idempotency_key": "source:v1:twenty:person-fetchable", "person_id": "person-fetchable", "stage": "enrichment", "status": "ok"},
+    {"idempotency_key": "source:v1:twenty:person-404", "person_id": "person-404", "stage": "enrichment", "status": "failed"},
+    {"idempotency_key": "source:v1:twenty:person-blocked", "person_id": "person-blocked", "stage": "enrichment", "status": "blocked"}
+  ],
+  "source_key": "fixture:eos-cohort",
+  "source_revision_hash": "sha256:fixture-revision"
+}

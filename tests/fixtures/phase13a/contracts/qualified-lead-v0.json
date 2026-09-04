@@ -1,0 +1,18 @@
+{
+  "twenty_person_id": "person-fetchable",
+  "prospect_id": "fixture:eos:person-fetchable",
+  "name": "Synthetic Practitioner",
+  "firm": "Synthetic Practice",
+  "linkedin_url": "https://linkedin.com/in/synthetic-practitioner",
+  "wedge": "EOS Practitioner",
+  "source": "cold-eos-list",
+  "lifecycle": "Cold",
+  "proof_pointers": [
+    "https://public.example/profile"
+  ],
+  "confidence": 0.92,
+  "email": null,
+  "title": null,
+  "draft_ref": null,
+  "pack_version_id": null
+}
