@@ -100,3 +100,37 @@ The canonical contract page, enrichment validation, and nine decision answers
 No live scraper, provider, or external request/response path was verified by
 this offline pass. Planned future work — owner: #1261 integration workstream:
 verify real provider behavior before any live-capability claim.
+
+## #1277 ingestion builder follow-up (2026-09-04)
+
+The ratified #1277 brief §2 resolves the original confidence, page locator and
+identity-boundary decisions. `opportunity_engine/ingest.py` now maps whole-page
+records without I/O, resolves existing Twenty identities at the command boundary,
+and writes OE rows in a file transaction. Unknown confidence retains its label and
+uses the mandated numeric floor. Receipt counts do not create evidence.
+
+Two acceptance gaps remain; this implementation is not merge-ready:
+
+- **PR-introduced blocker — owner: Mitch / #1277 planner and #25 pack workstream.**
+  The brief requires presence values `{present: true, url, confidence_label}` and
+  prohibits pack changes. `SuccessionColdPack.assess` accepts only boolean presence
+  values and explicitly holds objects at UNKNOWN. The new regression starts with
+  the FIT example, ingests its evidence, retains its full reviewer proofs, and
+  demonstrates UNKNOWN with unreadable proof. It does not claim the requested FIT
+  acceptance passed. Ratify the producer/consumer value alignment before merge.
+- **Environment-only limitation — owner: #1281 producer / #1277 planner.**
+  The referenced `980labsOS/docs/operations/phase-13a-brief-intel-gathering.md` §2A
+  is absent in the available companion checkout and its HEAD. `gh api` could not
+  connect to api.github.com to retrieve it. The brief lists observation predicates
+  but does not define their source linkage, span field names, or value shape.
+  Nonempty `observations[]` therefore fail before any resolution or writes;
+  pass-through and `chars:<start>-<end>` support remain unimplemented pending the
+  real contract. No replacement producer fixture or wire format was invented.
+
+Whole-page source mapping uses `eos_profile`, `website`, and `linkedin`; only
+`eos_profile` is present in the pinned producer output. The other two names follow
+its input fields and are an unverified integration assumption, not verified live
+behavior (**planned future work — owner: #1277/#1281 integration workstream**).
+Unknown source types fail validation. No external request path is enabled here.
+Changed source content must carry its changed producer content hash; changing
+excerpt metadata under the same immutable source/hash/locator is rejected.

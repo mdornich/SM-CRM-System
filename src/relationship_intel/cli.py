@@ -136,6 +136,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--folder-id", default=None)
     ingest.add_argument("--vault", default=None, type=Path)
 
+    ingest_evidence = sub.add_parser(
+        "ingest-evidence", help="ingest an offline enrichment drop file", parents=[output_parent]
+    )
+    ingest_evidence.add_argument("record", type=Path)
+
     intake_lead = sub.add_parser(
         "intake-lead",
         help="validate and queue a qualified cold-lead JSON record",
@@ -325,6 +330,34 @@ def main(argv: list[str] | None = None) -> int:
                     f"Ingested {stats['ingested']} transcript(s), "
                     f"skipped {stats['skipped_duplicates']} duplicate(s)"
                 )
+
+        elif args.command == "ingest-evidence":
+            from relationship_intel.opportunity_engine.ingest import (
+                ingest_drop_file,
+                resolve_twenty_subject,
+            )
+            from relationship_intel.opportunity_engine.repository import OpportunityRepository
+
+            legacy = pipeline.open_repo(settings)
+            try:
+                result = ingest_drop_file(
+                    OpportunityRepository(legacy.conn),
+                    args.record,
+                    lambda external_id: resolve_twenty_subject(legacy, external_id),
+                )
+            except (OSError, ValueError, KeyError, TypeError):
+                # Drop files contain source text and identities; diagnostics must not echo them.
+                if args.json_output:
+                    _print_json({"error": "invalid_drop_file"})
+                else:
+                    print("Invalid enrichment drop file", file=sys.stderr)
+                return 2
+            finally:
+                legacy.conn.close()
+            if args.json_output:
+                _print_json(result)
+            else:
+                print(", ".join(f"{key}={value}" for key, value in result.items()))
 
         elif args.command == "intake-lead":
             from relationship_intel.cold_intake import intake_qualified_lead, load_qualified_lead

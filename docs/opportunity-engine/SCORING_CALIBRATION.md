@@ -38,6 +38,10 @@ At least five manual hours/week is required; fixture timing strength is `min(100
 Fit is 100 for matching firms and 0 for explicit exclusions. These numbers are artificial
 architecture-test values, not commercial weights. No production ranking uses them.
 
+C3 ingestion maps high/medium/low to 0.9/0.6/0.3 and stores unknown as 0.0
+with `value.confidence_label="unknown"` as the truth (ratified #1277 brief §2);
+this schema-preserving floor is not measured zero confidence or qualification.
+
 Cold pack `succession:cold-v0` uses the committed `source/qualification.md` rubric:
 all four complete reviewer proofs yield `fit` / fit 100; any proved exclusion yields
 `unfit` / fit 0 (even with contradictory denial); everything else is `unknown` / fit null.
