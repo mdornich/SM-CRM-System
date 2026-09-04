@@ -21,7 +21,7 @@ Subject = tuple[int, int | None]
 CONFIDENCE = {"high": 0.9, "medium": 0.6, "low": 0.3, "unknown": 0.0}
 PRESENCE = {
     "eos_profile": "eos_directory_listed",
-    "website": "firm_website_present",
+    "firm_website": "firm_website_present",
     "linkedin": "linkedin_public_present",
 }
 

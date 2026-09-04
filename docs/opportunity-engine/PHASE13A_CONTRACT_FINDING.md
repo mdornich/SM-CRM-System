@@ -109,28 +109,55 @@ records without I/O, resolves existing Twenty identities at the command boundary
 and writes OE rows in a file transaction. Unknown confidence retains its label and
 uses the mandated numeric floor. Receipt counts do not create evidence.
 
-Two acceptance gaps remain; this implementation is not merge-ready:
+Three acceptance gaps remain; this implementation is not merge-ready:
 
-- **PR-introduced blocker — owner: Mitch / #1277 planner and #25 pack workstream.**
+- **Existing tracked debt — owner: Mitch / #1277 planner and #25 pack workstream.**
   The brief requires presence values `{present: true, url, confidence_label}` and
   prohibits pack changes. `SuccessionColdPack.assess` accepts only boolean presence
   values and explicitly holds objects at UNKNOWN. The new regression starts with
   the FIT example, ingests its evidence, retains its full reviewer proofs, and
   demonstrates UNKNOWN with unreadable proof. It does not claim the requested FIT
   acceptance passed. Ratify the producer/consumer value alignment before merge.
-- **Environment-only limitation — owner: #1281 producer / #1277 planner.**
+- **Existing tracked debt — owner: #1281 producer / #1277 planner.**
   The referenced `980labsOS/docs/operations/phase-13a-brief-intel-gathering.md` §2A
-  is absent in the available companion checkout and its HEAD. `gh api` could not
-  connect to api.github.com to retrieve it. The brief lists observation predicates
-  but does not define their source linkage, span field names, or value shape.
-  Nonempty `observations[]` therefore fail before any resolution or writes;
-  pass-through and `chars:<start>-<end>` support remain unimplemented pending the
-  real contract. No replacement producer fixture or wire format was invented.
+  is absent in the companion checkout. On the correction pass the ratified copy
+  at `/private/tmp/phase-13a-loop6-briefs/phase-13a-brief-intel-gathering.md` was
+  available and read. It specifies predicates, values, methods and evidence ids,
+  but still does not define source linkage field names or character span fields.
+  The deployed v0 producer has no `observations[]` output. Nonempty arrays fail
+  before resolution or writes; pass-through and `chars:<start>-<end>` support
+  remain unimplemented pending a ratified wire contract. The legacy bridge uses
+  `chars:{start}:{end}`, not the hyphen syntax asserted by the brief. No format
+  or producer response was invented.
+- **Existing tracked debt — owner: Mitch / #1277 planner.** AC4's excerpt-only
+  versioning requirement conflicts with §2's fixed source/ref/hash/page uniqueness
+  and immutable repository writes. Replay and changed-content-hash versioning pass;
+  excerpt-only changes raise an immutable conflict and preserve both tables.
+  Ratify the content-hash requirement or a different versioning contract.
 
-Whole-page source mapping uses `eos_profile`, `website`, and `linkedin`; only
-`eos_profile` is present in the pinned producer output. The other two names follow
-its input fields and are an unverified integration assumption, not verified live
-behavior (**planned future work — owner: #1277/#1281 integration workstream**).
-Unknown source types fail validation. No external request path is enabled here.
-Changed source content must carry its changed producer content hash; changing
-excerpt metadata under the same immutable source/hash/locator is rejected.
+## Critic correction evidence (2026-09-04)
+
+Read-only inspection of `980labsOS-deploy/scripts/n8n/succession_enrichment.py`
+(`7769b1f6d24aff24d6adf75067e9a45bdeb9155e`, `URL_FIELDS` lines 25–29 and
+capture loop lines 231–271) confirms the source types are `eos_profile`,
+`firm_website`, and `linkedin`. The mapper's earlier `website` assumption is
+corrected to `firm_website`; tests cover all three with explicitly synthetic
+variants. The producer excludes non-2xx captures from evidence, so ingestion
+continues to reject malformed evidence rows atomically. Source inspection is
+not live request/response verification. **Planned future work — owner: #1277/#1281
+integration workstream:** verify the real provider path before claiming live
+capability. No external request path is enabled by this offline command.
+
+`tests/test_evidence_ingest_mutations.py` replaces the uncommitted temporary
+harness: each case copies source into pytest's temporary directory, runs the
+unchanged confidence/locator tests successfully, reverts one decision, and
+requires pytest exit 1 with assertion failures. The normal focused and full
+suite now execute both mutation cases; the worktree source is never modified.
+`test_excerpt_only_change_preserves_original_and_rejects_conflict` explicitly
+covers the literal AC4 scenario. AC5 still proves UNKNOWN, not FIT; neither
+blocker is represented as a passing acceptance criterion.
+
+The CLI's generic `invalid_drop_file` response for immutable conflicts remains
+an acknowledged non-blocking usability limitation (**planned future work — owner:
+#1277 CLI workstream**). Error redaction and redundant validation are retained;
+no new operator error contract is introduced during this correction.

@@ -81,7 +81,7 @@ def test_pure_mapping_confidence_and_locator(record, monkeypatch, label, score):
     assert record == original
 
 
-def test_fixture_replay_changed_excerpt_and_legacy_unchanged(store, tmp_path, record):
+def test_fixture_replay_changed_content_hash_and_legacy_unchanged(store, tmp_path, record):
     repo, legacy, subject = store
     before = legacy_snapshot(repo.conn)
     first = ingest(repo, legacy, tmp_path, record)
@@ -191,7 +191,7 @@ def test_ingest_fit_sources_exposes_pack_contract_blocker(store, tmp_path, recor
             excerpt=source["excerpt"],
             captured_at=source["captured_at"],
         )
-        for source, kind in zip(fit["evidence"], ["eos_profile", "website"], strict=True)
+        for source, kind in zip(fit["evidence"], ["eos_profile", "firm_website"], strict=True)
     ]
     ingest(repo, legacy, tmp_path, record)
     evidence, observations = map_drop_file(record, {"person-fetchable": subject})
@@ -209,3 +209,33 @@ def test_ingest_fit_sources_exposes_pack_contract_blocker(store, tmp_path, recor
     assessment = SuccessionColdPack().assess(observations + labels)
     assert assessment.classification == "unknown"
     assert "unreadable proof" in assessment.reason
+
+
+@pytest.mark.parametrize(
+    "source_type,predicate",
+    [
+        ("eos_profile", "eos_directory_listed"),
+        ("firm_website", "firm_website_present"),
+        ("linkedin", "linkedin_public_present"),
+    ],
+)
+def test_producer_source_types(record, source_type, predicate):
+    # Synthetic variants using URL_FIELDS in the real v0 producer, not live responses.
+    record["evidence"][0]["source_type"] = source_type
+    evidence, observations = map_drop_file(record, {"person-fetchable": (1, None)})
+    assert evidence[0].source_type == source_type
+    assert observations[0].predicate == predicate
+
+
+def test_excerpt_only_change_preserves_original_and_rejects_conflict(store, tmp_path, record):
+    repo, legacy, _ = store
+    ingest(repo, legacy, tmp_path, record)
+    before = {
+        table: [tuple(row) for row in repo.conn.execute(f"SELECT * FROM {table}")]
+        for table in ("oe_evidence", "oe_observations")
+    }
+    record["evidence"][0]["excerpt"] = "Changed excerpt with unchanged producer hash"
+    with pytest.raises(ValueError, match="immutable ID conflict"):
+        ingest(repo, legacy, tmp_path, record)
+    for table, rows in before.items():
+        assert [tuple(row) for row in repo.conn.execute(f"SELECT * FROM {table}")] == rows
