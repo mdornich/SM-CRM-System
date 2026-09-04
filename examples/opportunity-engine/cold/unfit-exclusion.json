@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "id": "unfit-exclusion",
+  "pack_version_id": "succession:cold-v0",
+  "evidence": [
+    {
+      "id": "e0",
+      "source_type": "synthetic-public-profile",
+      "source_ref": "fixture:profile-0",
+      "content_hash": "a1cf8529f306498294ef2154f7b5ca0e2528d6a7f83dea5508a07ddf6fd93c55",
+      "locator": "paragraph:1",
+      "excerpt": "Synthetic directory: Alex Example is a Certified EOS Implementer and controls practice recommendations as its owner. Name Alex Example, firm Example Practice, geography Chicago match the public firm profile.",
+      "captured_at": "2026-09-04T00:00:00Z",
+      "occurred_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "e1",
+      "source_type": "synthetic-public-profile",
+      "source_ref": "fixture:profile-1",
+      "content_hash": "cfe472745fa2a8b05bb496637bdd33db4dce5b4da4aff9f228dc781bf8730d7c",
+      "locator": "paragraph:1",
+      "excerpt": "Synthetic firm profile: Alex Example owns the solo Example Practice in Chicago, serving an active recurring portfolio of leadership teams. Public implementation articles repeatedly discuss the Process Component. I am the owner of this firm, thinking about selling next year. Expects Succession to own rollout.",
+      "captured_at": "2026-09-04T00:00:00Z",
+      "occurred_at": "2026-09-03T00:00:00Z"
+    }
+  ],
+  "observations": [
+    {
+      "id": "directory",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e0",
+      "predicate": "eos_directory_listed",
+      "value": true,
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "website",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "firm_website_present",
+      "value": true,
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "linkedin",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "linkedin_public_present",
+      "value": true,
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "eos_directory_owner_led",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e0",
+      "predicate": "human_label",
+      "value": {
+        "criterion": "eos_directory_owner_led",
+        "proved": true
+      },
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "active_portfolio",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "human_label",
+      "value": {
+        "criterion": "active_portfolio",
+        "proved": true
+      },
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "public_practice_footprint",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "human_label",
+      "value": {
+        "criterion": "public_practice_footprint",
+        "proved": true
+      },
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "identity_matched",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "human_label",
+      "value": {
+        "criterion": "identity_matched",
+        "proved": true
+      },
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    },
+    {
+      "id": "exclusion",
+      "account_id": 1,
+      "person_id": 1,
+      "evidence_id": "e1",
+      "predicate": "human_label",
+      "value": {
+        "criterion": "excl_own_rollout",
+        "proved": true
+      },
+      "method": "synthetic-human-review",
+      "confidence": 0.8
+    }
+  ],
+  "expected": {
+    "classification": "unfit",
+    "eligible": false,
+    "signal_keys": [
+      "eos_directory_owner_led",
+      "active_portfolio",
+      "public_practice_footprint",
+      "identity_matched",
+      "excl_own_rollout"
+    ]
+  },
+  "labeler": "synthetic-cold-development-fixture",
+  "split": "development"
+}

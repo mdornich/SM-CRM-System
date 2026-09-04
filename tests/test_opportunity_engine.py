@@ -3,11 +3,13 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from relationship_intel.extraction.schemas import Company, Person
+from relationship_intel.opportunity_engine.evaluation import GoldCase
 from relationship_intel.opportunity_engine.models import (
     Evidence,
     Observation,
@@ -19,6 +21,7 @@ from relationship_intel.opportunity_engine.packs import PackRegistry
 from relationship_intel.opportunity_engine.repository import OpportunityRepository
 from relationship_intel.opportunity_engine.service import create_hypothesis
 from relationship_intel.opportunity_engine.succession import SuccessionPack
+from relationship_intel.opportunity_engine.succession_cold import SuccessionColdPack
 from relationship_intel.opportunity_engine.workflow_audit import WorkflowAuditPack
 from relationship_intel.store.db import SCHEMA, connect
 from relationship_intel.store.repository import Repository
@@ -209,10 +212,14 @@ def test_required_evidence_scores_state_and_immutable_versions(store):
 def test_registry_is_explicit_and_rejects_duplicate_versions():
     registry = PackRegistry()
     registry.register(SuccessionPack())
+    registry.register(SuccessionColdPack())
+    assert registry.get("succession:cold-v0").version.fixture_only is False
     registry.register(WorkflowAuditPack())
     assert registry.get(WorkflowAuditPack.version.id).version.fixture_only
     with pytest.raises(ValueError, match="already registered"):
         registry.register(SuccessionPack())
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(SuccessionColdPack())
     with pytest.raises(KeyError):
         registry.get("unknown")
 
@@ -333,3 +340,34 @@ def test_legacy_projection_is_opt_in_replayable_and_preserves_old_state(settings
     after = [line for line in conn.iterdump() if "oe_" not in line]
     assert before == after
     conn.close()
+
+
+def test_shared_subject_cross_version_reuses_evidence_and_confidence(store):
+    repo, account, person = store
+    path = Path(__file__).parent.parent / "examples/opportunity-engine/cold/fit.json"
+    case = GoldCase.model_validate_json(path.read_text())
+    for evidence in case.evidence:
+        repo.put(evidence)
+    observations = tuple(
+        o.model_copy(update={"account_id": account, "person_id": person}) for o in case.observations
+    )
+    statement = observations[-1].model_copy(
+        update={
+            "id": "warm-statement",
+            "predicate": "statement",
+            "value": "I am the owner of this firm, thinking about selling next year.",
+        }
+    )
+    observations = (*observations, statement)
+    for observation in observations:
+        repo.put(observation)
+    cold = hypothesis(repo, SuccessionColdPack(), observations, account, person, "cold")
+    warm = hypothesis(repo, SuccessionPack(), observations, account, person, "warm")
+    assert cold.pack_version_id == "succession:cold-v0"
+    assert warm.pack_version_id == "succession:foundation-v1"
+    assert warm.scoring_version == "succession-v0.1"
+    assert cold.observation_ids == warm.observation_ids
+    assert repo.conn.execute("SELECT COUNT(*) FROM oe_evidence").fetchone()[0] == 2
+    assert repo.conn.execute("SELECT COUNT(*) FROM oe_products").fetchone()[0] == 1
+    assert len(repo.hypotheses(account_id=account, person_id=person)) == 2
+    assert all(repo.get(Observation, o.id).confidence == 0.8 for o in observations)

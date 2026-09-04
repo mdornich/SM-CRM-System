@@ -38,6 +38,21 @@ At least five manual hours/week is required; fixture timing strength is `min(100
 Fit is 100 for matching firms and 0 for explicit exclusions. These numbers are artificial
 architecture-test values, not commercial weights. No production ranking uses them.
 
+Cold pack `succession:cold-v0` uses the committed `source/qualification.md` rubric:
+all four complete reviewer proofs yield `fit` / fit 100; any proved exclusion yields
+`unfit` / fit 0 (even with contradictory denial); everything else is `unknown` / fit null.
+All other dimensions stay null under `succession-cold-v0`. `human_label` observations
+carry `{criterion: <signal key>, proved: true|false|null}`; true asserts the whole
+rubric criterion and its proof law. Directory presence and website/LinkedIn presence
+corroborate, but never substitute for, reviewer proof. Statements alone infer nothing.
+One evidence reference cannot establish FIT; distinct references are only a necessary
+check, not verification of source independence. Reviewers own URLs, publication/read
+dates, source independence and complete compound proof (including repeated Process
+Component references and name + firm + geography). Observation confidence is preserved
+through hypothesis observation IDs and never converted to a score. This pack performs
+no acquisition or live source verification. Acquirer qualification/routing is deferred;
+a referral is UNFIT only when an EOS exclusion is proved, otherwise UNKNOWN.
+
 ## Proposed deterministic composite
 
 Do not enable a composite until required dimensions and labels are agreed. A future scoring
