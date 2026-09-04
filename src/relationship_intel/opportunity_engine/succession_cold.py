@@ -2,7 +2,9 @@
 
 human_label values are {"criterion": <signal key>, "proved": true|false|null}.
 True asserts the ENTIRE criterion, including its source/proof law. False denies it;
-null/partial/malformed facts cannot prove it. Reviewers own source verification.
+null/partial/malformed facts cannot prove it, and a label or presence fact the pack
+cannot read is never discarded — it holds the verdict at UNKNOWN, so a mistyped
+exclusion key can never leave a subject scored FIT. Reviewers own source verification.
 Directory/website/LinkedIn presence alone cannot establish a compound FIT criterion.
 Statements remain reusable evidence; a reviewer must label their implications.
 """
@@ -76,14 +78,28 @@ class SuccessionColdPack:
         }
         signals = []
         proof_sources = set()
+        unreadable = []
         for observation in observations:
             value = observation.value
-            if observation.predicate in presence and type(value) is bool:
-                presence[observation.predicate].add(value)
-            if observation.predicate != "human_label" or not isinstance(value, dict):
+            if observation.predicate in presence:
+                # A presence fact the pack cannot read is not the same as absence:
+                # `0` beside `true` would drop out of the set and the directory /
+                # footprint contradiction check would never see the disagreement.
+                if type(value) is bool:
+                    presence[observation.predicate].add(value)
+                else:
+                    unreadable.append(observation.id)
                 continue
-            key, proved = value.get("criterion"), value.get("proved")
+            if observation.predicate != "human_label":
+                continue
+            key = value.get("criterion") if isinstance(value, dict) else None
+            proved = value.get("proved") if isinstance(value, dict) else None
             if not isinstance(key, str) or key not in labels or type(proved) is not bool:
+                # Never discard a label silently. A mistyped exclusion key, a
+                # string "true", or a missing `proved` used to vanish here — and
+                # a reviewer asserting an exclusion would still see FIT/100.
+                # Proof the pack cannot read holds the verdict at UNKNOWN.
+                unreadable.append(key if isinstance(key, str) and key in labels else observation.id)
                 continue
             labels[key].add(proved)
             if proved:
@@ -108,6 +124,8 @@ class SuccessionColdPack:
             missing.append("public_practice_footprint: presence missing or contradictory")
         if len(proof_sources) < 2:
             missing.append("rubric UNKNOWN: one source only or missing evidence")
+        if unreadable:
+            missing.append("unreadable proof: " + ", ".join(sorted(set(unreadable))))
         fit: int | None
         if exclusions:
             classification, fit = "unfit", 0

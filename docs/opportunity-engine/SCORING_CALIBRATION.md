@@ -48,7 +48,10 @@ corroborate, but never substitute for, reviewer proof. Statements alone infer no
 One evidence reference cannot establish FIT; distinct references are only a necessary
 check, not verification of source independence. Reviewers own URLs, publication/read
 dates, source independence and complete compound proof (including repeated Process
-Component references and name + firm + geography). Observation confidence is preserved
+Component references and name + firm + geography). A `human_label` the pack cannot read
+(unknown criterion key, non-boolean `proved`, non-object value) or a presence fact that is
+not a boolean is never discarded: it holds the verdict at `unknown`, so a mistyped
+exclusion can never leave a subject scored `fit`. Observation confidence is preserved
 through hypothesis observation IDs and never converted to a score. This pack performs
 no acquisition or live source verification. Acquirer qualification/routing is deferred;
 a referral is UNFIT only when an EOS exclusion is proved, otherwise UNKNOWN.

@@ -89,6 +89,44 @@ def test_exclusion_wins_even_with_full_fit_and_denial(key):
     assert key in result.reason
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"criterion": "excl_own_rollout_typo", "proved": True},
+        {"criterion": "excl_own_rollout ", "proved": True},
+        {"criterion": "excl_own_rollout", "proved": "true"},
+        {"criterion": "excl_own_rollout", "proved": 1},
+        {"criterion": "excl_own_rollout"},
+        {"criteria": "excl_own_rollout", "proved": True},
+        "excl_own_rollout",
+    ],
+)
+def test_unreadable_label_cannot_be_dropped_into_a_fit(value):
+    """A proved exclusion the pack cannot parse must not silently qualify the subject."""
+    observations = case().observations
+    unreadable = observations[-1].model_copy(update={"id": "unreadable", "value": value})
+    result = SuccessionColdPack().assess((*observations, unreadable))
+    assert result.classification == "unknown"
+    assert not result.eligible
+    assert result.scores.fit is None
+    assert "unreadable" in result.reason
+
+
+@pytest.mark.parametrize(
+    "predicate", ["eos_directory_listed", "firm_website_present", "linkedin_public_present"]
+)
+@pytest.mark.parametrize("value", [0, 1, "false", "true", None])
+def test_unreadable_presence_cannot_hide_a_contradiction(predicate, value):
+    observations = case().observations
+    conflict = observations[0].model_copy(
+        update={"id": "conflict", "predicate": predicate, "value": value}
+    )
+    result = SuccessionColdPack().assess((*observations, conflict))
+    assert result.classification == "unknown"
+    assert not result.eligible
+    assert "unreadable proof: conflict" in result.reason
+
+
 def test_presence_keywords_and_one_source_cannot_prove_fit():
     observations = case().observations
     pack = SuccessionColdPack()
