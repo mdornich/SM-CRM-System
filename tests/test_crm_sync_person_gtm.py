@@ -7,6 +7,8 @@ un-updated, so the four fields were only ever written on brand-new records."""
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from relationship_intel.crm.base import CRMRef
@@ -89,3 +91,31 @@ def test_blank_cached_ref_falls_through_to_find_or_create(crm_id):
     payload = {"name": "Ann Lee", "existing_crm_ref": {"crm_id": crm_id}}
     assert _resolve_person_ref(adapter, payload).crm_id == "p-new"
     assert adapter.updates == []
+
+
+class _RaisingAdapter(_RecordingAdapter):
+    def __init__(self, exc: Exception):
+        super().__init__()
+        self.exc = exc
+
+    def update_contact_gtm_fields(self, ref: CRMRef, person: dict) -> CRMRef:
+        raise self.exc
+
+
+@pytest.mark.parametrize("exc", [ValueError("bad wedge value"), RuntimeError("twenty 500")])
+def test_gtm_write_failure_is_contained_per_record_and_counted(exc, caplog):
+    """Finding 4: one malformed GTM value must not abort a run that already
+    wrote companies and earlier people and persisted their sync state."""
+    stats = {"gtm_write_failed": 0}
+    adapter = _RaisingAdapter(exc)
+    with caplog.at_level(logging.WARNING):
+        ref = _resolve_person_ref(adapter, _payload(source="warm-james"), stats)
+    assert ref.crm_id == "p-9"  # person still usable for notes/tasks
+    assert stats["gtm_write_failed"] == 1
+    assert any("GTM field write failed" in record.getMessage() for record in caplog.records)
+
+
+def test_successful_gtm_write_does_not_increment_the_failure_counter():
+    stats = {"gtm_write_failed": 0}
+    _resolve_person_ref(_RecordingAdapter(), _payload(source="warm-james"), stats)
+    assert stats["gtm_write_failed"] == 0

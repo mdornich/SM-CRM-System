@@ -102,5 +102,27 @@ carries on the mini (values read live, GET only, 2026-09-03):
   three fields still write in that same PATCH.
 - `find_contact` **omits** a field Twenty has unset rather than reporting
   `None`/`[]`, because a present key means "write this" on the update path.
+- **There are no clearing semantics.** A key that is absent *or explicitly
+  `None`* is omitted from the request. Clearing a GTM field is a human action in
+  the Twenty UI, never a sync side effect (base.py's additive/update-safe
+  contract).
+- **`wedge` writes merge, they don't replace.** A MULTI_SELECT PATCH replaces the
+  whole array, so a plain write would drop a tag a human added. The adapter reads
+  the current tags and merges (server order first, then anything new), skipping
+  the write when it would add nothing. Consequence: **a sync can never remove a
+  wedge tag** — do that in the Twenty UI.
+- A GTM write that fails on an already-matched contact is contained per record
+  and counted in the sync stats as `gtm_write_failed`; the person still syncs and
+  its notes/tasks still land.
+
+### What this does not yet do
+
+Nothing in this repo *produces* these four keys. `pipeline.py` and `sync.py`
+build person payloads from name / email / title / company only, so the write
+path is reachable only by a caller that adds them. Lighting it up needs an
+upstream change in extraction — `extraction.py`'s person schema plus the
+`pipeline.py` payload builder — to emit `wedge` / `wedge_primary` / `source` /
+`lifecycle_stage`, or a bulk importer that calls
+`update_contact_gtm_fields` directly.
 - Upstream moves fast; after pulling the fork, re-verify the composite shapes
   before trusting the adapter.

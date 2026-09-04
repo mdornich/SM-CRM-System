@@ -21,7 +21,7 @@ def _payload_hash(payload: dict) -> str:
     return short_hash(json.dumps(payload, sort_keys=True))
 
 
-def _resolve_person_ref(adapter: CRMAdapter, payload: dict) -> CRMRef:
+def _resolve_person_ref(adapter: CRMAdapter, payload: dict, stats: dict | None = None) -> CRMRef:
     """Prefer the reviewer-confirmed `existing_crm_ref` from the review UI
     (gh #15) so we never create a duplicate Twenty contact for someone the
     review workflow already flagged as a follow-up. Falls back to the
@@ -37,7 +37,21 @@ def _resolve_person_ref(adapter: CRMAdapter, payload: dict) -> CRMRef:
         ref = CRMRef(adapter.provider, "person", existing["crm_id"], existing.get("url"))
         update = getattr(adapter, "update_contact_gtm_fields", None)
         if update is not None and has_person_gtm_fields(payload):
-            update(ref, payload)
+            # Contained per record: one malformed GTM value (or a transient
+            # Twenty error) must not abort a run that has already written
+            # companies and earlier people and persisted their sync state. The
+            # person ref itself is still valid, so notes and tasks still land.
+            try:
+                update(ref, payload)
+            except Exception as exc:  # noqa: BLE001 — one bad record, not the run
+                logger.warning(
+                    "twenty GTM field write failed for person %s: %s: %s",
+                    ref.crm_id,
+                    type(exc).__name__,
+                    exc,
+                )
+                if stats is not None:
+                    stats["gtm_write_failed"] += 1
         return ref
     return adapter.find_or_create_contact(payload)
 
@@ -85,6 +99,9 @@ def sync_to_crm(
         "skipped": 0,
         "skipped_by_stage": 0,
         "skipped_not_approved": 0,
+        # GTM Person custom-field writes that failed on an already-matched
+        # contact. The person still syncs; only the four §4 fields are missed.
+        "gtm_write_failed": 0,
     }
     twenty_provider = adapter.provider == "twenty"
     adapter.ensure_schema()
@@ -139,7 +156,7 @@ def sync_to_crm(
             "person",
             person.id,
             payload,
-            lambda p: _resolve_person_ref(adapter, p),
+            lambda p: _resolve_person_ref(adapter, p, stats),
         )
         person_refs[person.id] = state["crm_id"]
         stats["people" if pushed else "skipped"] += 1

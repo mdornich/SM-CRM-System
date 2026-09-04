@@ -777,14 +777,16 @@ def test_update_contact_gtm_fields_reads_current_stage_before_writing():
         calls.append(request)
         if request.method == "GET":
             return httpx.Response(
-                200, json={"data": {"people": [{"id": "p-4", "lifecycleStage": "CUSTOMER"}]}}
+                200, json={"data": {"person": {"id": "p-4", "lifecycleStage": "CUSTOMER"}}}
             )
         return httpx.Response(200, json={"data": {"updatePerson": {"id": "p-4"}}})
 
     _adapter(handler).update_contact_gtm_fields(
         CRMRef("twenty", "person", "p-4"), {"lifecycle_stage": "Cold"}
     )
-    assert calls[0].url.params["filter"] == "id[eq]:p-4"
+    # Finding 5: a plain by-id read, not a bespoke id[eq] filter form.
+    assert (calls[0].method, calls[0].url.path) == ("GET", "/rest/people/p-4")
+    assert "filter" not in dict(calls[0].url.params)
     assert not [c for c in calls if c.method == "PATCH"]
 
 
@@ -832,3 +834,108 @@ def test_removed_na_wedge_option_now_fails_closed():
         with pytest.raises(ValueError, match="NA"):
             _adapter(handler).find_or_create_contact(person)
     assert calls == []
+
+
+# --- PR #18 review round 3 ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "person",
+    [
+        {"lifecycle_stage": None},
+        {"wedge": None},
+        {"source": None},
+        {"wedge_primary": None},
+    ],
+)
+def test_explicit_none_never_clears_a_gtm_field(person):
+    """Finding 1: an explicit None used to PATCH `null`, wiping a human-set
+    value and bypassing the §4 guard entirely. None now means 'omit' — the
+    adapter has no clearing semantics for these fields."""
+    calls = []
+    _adapter(
+        _people_handler(calls, existing=[{"id": "p-9", "lifecycleStage": "MEETING"}])
+    ).find_or_create_contact({"name": "Bob Smith", "email": "bob@x.com", **person})
+    assert [c.method for c in calls] == ["GET"]  # no PATCH at all
+
+
+def test_explicit_none_is_omitted_on_create_too():
+    calls = []
+    _adapter(_people_handler(calls)).find_or_create_contact(
+        {
+            "name": "Ann Lee",
+            "email": "ann@x.com",
+            "wedge": None,
+            "wedge_primary": None,
+            "source": None,
+            "lifecycle_stage": None,
+        }
+    )
+    body = json.loads(calls[-1].content)
+    for field in ("wedge", "wedgePrimary", "source", "lifecycleStage"):
+        assert field not in body
+
+
+def test_lifecycle_progression_is_derived_from_the_option_list():
+    """Finding 2: the guard's stage order must come from the field's options,
+    not a hand-maintained second copy that silently goes stale."""
+    from relationship_intel.crm import twenty_adapter as ta
+
+    assert ta.LIFECYCLE_PROGRESSION == tuple(
+        stage for stage in ta.LIFECYCLE_STAGE_ORDER if stage not in ta.LIFECYCLE_TERMINAL_STAGES
+    )
+    assert ta.LIFECYCLE_STAGE_ORDER == tuple(ta.LIFECYCLE_STAGE_VALUES)
+    # A stage added to the options is picked up by the guard with no other edit.
+    assert ta.lifecycle_is_forward(ta.LIFECYCLE_PROGRESSION[0], ta.LIFECYCLE_PROGRESSION[-1])
+    assert not ta.lifecycle_is_forward(ta.LIFECYCLE_PROGRESSION[-1], ta.LIFECYCLE_PROGRESSION[0])
+
+
+def test_wedge_write_merges_with_server_side_tags():
+    """Finding 6: MULTI_SELECT PATCH replaces the whole array, so a plain write
+    silently drops a tag a human added in Twenty. Merge, additively."""
+    calls = []
+    _adapter(
+        _people_handler(
+            calls,
+            existing=[{"id": "p-9", "wedge": ["XPX", "OTHER"], "lifecycleStage": "COLD"}],
+        )
+    ).find_or_create_contact(
+        {"name": "Bob Smith", "email": "bob@x.com", "wedge": ["Acquirer", "XPX"]}
+    )
+    patch = next(c for c in calls if c.method == "PATCH")
+    # Server order preserved, then anything new; no duplicates, nothing dropped.
+    assert json.loads(patch.content) == {"wedge": ["XPX", "OTHER", "ACQUIRER"]}
+
+
+def test_wedge_write_is_skipped_when_it_adds_nothing():
+    calls = []
+    _adapter(
+        _people_handler(calls, existing=[{"id": "p-9", "wedge": ["XPX", "OTHER"]}])
+    ).find_or_create_contact({"name": "Bob Smith", "email": "bob@x.com", "wedge": ["XPX"]})
+    assert [c.method for c in calls] == ["GET"]
+
+
+def test_wedge_merge_reads_current_tags_for_a_bare_ref():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {"person": {"id": "p-4", "wedge": ["XPX"]}}})
+        return httpx.Response(200, json={"data": {"updatePerson": {"id": "p-4"}}})
+
+    _adapter(handler).update_contact_gtm_fields(
+        CRMRef("twenty", "person", "p-4"), {"wedge": ["Acquirer"]}
+    )
+    assert (calls[0].method, calls[0].url.path) == ("GET", "/rest/people/p-4")
+    patch = next(c for c in calls if c.method == "PATCH")
+    assert json.loads(patch.content) == {"wedge": ["XPX", "ACQUIRER"]}
+
+
+def test_no_extra_read_when_only_unguarded_fields_are_written():
+    """source/wedgePrimary need no server state, so they cost no extra GET."""
+    calls = []
+    _adapter(_people_handler(calls, existing=[{"id": "p-9"}])).find_or_create_contact(
+        {"name": "Bob Smith", "email": "bob@x.com", "source": "warm-james"}
+    )
+    assert [c.method for c in calls] == ["GET", "PATCH"]  # the dedup lookup, then the write
