@@ -31,6 +31,7 @@ unavailable downloadable v0.2/v0.3 documents verbatim.
 | [Decision log](DECISION_LOG.md) | ADRs with consequences and revisit criteria |
 | [Open questions](OPEN_QUESTIONS.md) | Decisions needed before the next milestone |
 | [Implementation backlog](IMPLEMENTATION_BACKLOG.md) | Delivered foundation and sequenced remaining slices |
+| [Genesis transcript](source/2026-09-03-opportunity-engine-genesis-transcript.md) | Verbatim source exchange where the multi-product Opportunity Engine was named and framed |
 
 ## What runs now
 
