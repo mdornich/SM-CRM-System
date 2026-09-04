@@ -29,18 +29,38 @@ mkdir -p output/logs
 
 # Lowest-precedence merge of the dev .env. Values already in the environment
 # (i.e. injected by with-8d-env.sh) are never overwritten.
+#
+# Three things here are load-bearing and easy to get wrong:
+#
+#   * The "already set" test is a PRESENCE test, not `-n`. An exported-but-empty
+#     variable is set. Treating empty as absent would let this file refill a
+#     credential the wrapper deliberately injected as empty, which is exactly
+#     the silent degradation review-gate.sh's empty-key check exists to catch —
+#     and that check runs after this, so it would never fire.
+#   * The value is assigned with `export "K=$v"`, never `eval`. An unquoted eval
+#     word-splits and globs the value, and executes any $(...) or backticks
+#     inside it.
+#   * All leading whitespace is stripped, not one space. A tab-indented line
+#     would otherwise yield a key like "\tFOO", fail the identifier check, and
+#     be dropped without a word.
 if [[ -f "$REPO_DIR/.env" ]]; then
     while IFS= read -r _line || [[ -n "$_line" ]]; do
-        _line="${_line## }"
+        _line="${_line#"${_line%%[![:space:]]*}"}"
         [[ -z "$_line" || "$_line" == \#* ]] && continue
         _line="${_line#export }"
+        _line="${_line#"${_line%%[![:space:]]*}"}"
         _key="${_line%%=*}"
         [[ "$_key" == "$_line" ]] && continue
         [[ "$_key" =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]] || continue
-        [[ -n "${(P)_key-}" ]] && continue
-        eval "export ${_line}"
+        (( ${(P)+_key} )) && continue
+        _value="${_line#*=}"
+        # Strip one matched pair of surrounding quotes, the common .env form.
+        if [[ "$_value" == \"*\" || "$_value" == \'*\' ]] && (( ${#_value} >= 2 )); then
+            _value="${_value[2,-2]}"
+        fi
+        export "${_key}=${_value}"
     done < "$REPO_DIR/.env"
-    unset _line _key
+    unset _line _key _value
 fi
 
 VENV="$HOME/.venvs/sm-crm-system"

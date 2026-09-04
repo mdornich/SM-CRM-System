@@ -44,7 +44,8 @@ def build_sandbox(tmp_path: Path, *, env_file: str | None = None) -> Path:
         'echo "PYTHON_ARGS: $@"\n'
         'echo "TWENTY_API_URL=${TWENTY_API_URL-}"\n'
         'echo "TWENTY_API_KEY=${TWENTY_API_KEY-}"\n'
-        'echo "DEV_ONLY_KEY=${DEV_ONLY_KEY-}"\n'
+        'echo "DEV_ONLY_KEY=[${DEV_ONLY_KEY-<absent>}]"\n'
+        'echo "TABBED_KEY=[${TABBED_KEY-<absent>}]"\n'
         'echo "CWD=$(pwd)"\n'
     )
     stub.chmod(0o755)
@@ -114,7 +115,7 @@ def test_dotenv_still_fills_gaps(tmp_path: Path) -> None:
         env={"SM_CRM_ENV_WRAPPED": "1", "SM_CRM_LOG_DIR": str(tmp_path / "logs")},
     )
     assert result.returncode == 0, result.stderr
-    assert "DEV_ONLY_KEY=dev-value" in result.stdout
+    assert "DEV_ONLY_KEY=[dev-value]" in result.stdout
 
 
 # --- finding 2: launchd creates the log file, not its parent ---------------
@@ -201,6 +202,80 @@ def test_environment_repo_dir_cannot_redirect_the_checkout(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     assert f"CWD={repo.resolve()}" in result.stdout
     assert str(decoy.resolve()) not in result.stdout
+
+
+# --- third pass: the loader's own failure modes -----------------------------
+
+
+def test_empty_injected_value_is_not_refilled_from_the_file(tmp_path: Path) -> None:
+    """An exported-but-empty variable is SET, and must win.
+
+    `-n` treats it as absent, so the local file refills the credential and
+    review-gate.sh's empty-key check — which runs afterwards — never fires. That
+    defeats the whole mock-CRM guard.
+    """
+    repo = build_sandbox(tmp_path, env_file="TWENTY_API_KEY=from-dotfile\n")
+    result = run_gate(
+        repo,
+        env={
+            "SM_CRM_ENV_WRAPPED": "1",
+            "SM_CRM_LOG_DIR": str(tmp_path / "logs"),
+            "TWENTY_API_KEY": "",
+        },
+    )
+    assert result.returncode == 78, result.stdout
+    assert "TWENTY_API_KEY is empty" in result.stderr
+    assert "from-dotfile" not in result.stdout
+
+
+def test_values_are_not_word_split_globbed_or_executed(tmp_path: Path) -> None:
+    """`eval "export $line"` runs command substitutions and splits on spaces."""
+    marker = tmp_path / "pwned"
+    repo = build_sandbox(
+        tmp_path,
+        env_file=(f"TWENTY_API_KEY=k\nDEV_ONLY_KEY=hello world $(touch {marker}) *\n"),
+    )
+    result = run_gate(
+        repo,
+        env={"SM_CRM_ENV_WRAPPED": "1", "SM_CRM_LOG_DIR": str(tmp_path / "logs")},
+    )
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists(), "a command substitution in a value was executed"
+    assert f"DEV_ONLY_KEY=[hello world $(touch {marker}) *]" in result.stdout
+
+
+def test_indented_and_tab_prefixed_lines_are_loaded(tmp_path: Path) -> None:
+    """Stripping one space leaves a key like '\tFOO', which is silently dropped."""
+    repo = build_sandbox(
+        tmp_path,
+        env_file="TWENTY_API_KEY=k\n\tTABBED_KEY=tabbed\n    DEV_ONLY_KEY=indented\n",
+    )
+    result = run_gate(
+        repo,
+        env={"SM_CRM_ENV_WRAPPED": "1", "SM_CRM_LOG_DIR": str(tmp_path / "logs")},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "TABBED_KEY=[tabbed]" in result.stdout
+    assert "DEV_ONLY_KEY=[indented]" in result.stdout
+
+
+def test_stray_repo_dir_is_ignored_by_the_gate_too(tmp_path: Path) -> None:
+    """review-gate.sh must not paper over this by assigning REPO_DIR itself.
+
+    The protection has to live in _repo-env.sh, where every entrypoint gets it.
+    """
+    repo = build_sandbox(tmp_path, env_file="TWENTY_API_KEY=k\n")
+    decoy = build_sandbox(tmp_path / "elsewhere", env_file="TWENTY_API_KEY=decoy\n")
+    result = run_gate(
+        repo,
+        env={
+            "SM_CRM_ENV_WRAPPED": "1",
+            "SM_CRM_LOG_DIR": str(tmp_path / "logs"),
+            "REPO_DIR": str(decoy),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"CWD={repo.resolve()}" in result.stdout
 
 
 # --- finding 5: arguments are forwarded, not silently dropped --------------

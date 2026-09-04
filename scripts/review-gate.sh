@@ -19,7 +19,9 @@
 # are gating writes to Twenty, and nothing tells them otherwise.
 set -euo pipefail
 
-REPO_DIR="${0:A:h:h}"
+# No REPO_DIR here on purpose. _repo-env.sh resolves it from its own location,
+# and assigning it here would only mask a stray REPO_DIR arriving from the
+# environment for this one entrypoint while the others stayed exposed.
 
 # launchd creates the log FILE but not intermediate directories, and StandardOut
 # /StandardErrorPath both live under here. Without this, a failing start on a
