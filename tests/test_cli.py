@@ -72,6 +72,31 @@ def test_ingest_defaults_to_transcripts_inbox_dir(tmp_path):
     assert json.loads(result.stdout)["ingested"] == 1
 
 
+def test_intake_lead_command_queues_valid_json(tmp_path):
+    record = tmp_path / "lead.json"
+    record.write_text(
+        json.dumps(
+            {
+                "twenty_person_id": "twenty-1",
+                "prospect_id": "prospect-1",
+                "name": "Ada Lovelace",
+                "firm": "Analytical Engines",
+                "linkedin_url": "https://linkedin.com/in/ada",
+                "wedge": "EOS Practitioner",
+                "source": "cold-eos-list",
+                "lifecycle": "Cold",
+                "proof_pointers": ["pack://eos/ada#qualification"],
+                "confidence": 0.92,
+            }
+        )
+    )
+
+    result = _run(["intake-lead", str(record), "--json"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["person_created"] is True
+
+
 def test_unknown_crm_choice_is_an_argparse_error(tmp_path):
     result = _run(["sync-crm", "--crm", "salesforce"], tmp_path)
     assert result.returncode == 2

@@ -136,6 +136,13 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--folder-id", default=None)
     ingest.add_argument("--vault", default=None, type=Path)
 
+    intake_lead = sub.add_parser(
+        "intake-lead",
+        help="validate and queue a qualified cold-lead JSON record",
+        parents=[output_parent],
+    )
+    intake_lead.add_argument("record", type=Path)
+
     sync = sub.add_parser(
         "sync-crm", help="sync extracted records to the CRM", parents=[output_parent]
     )
@@ -318,6 +325,16 @@ def main(argv: list[str] | None = None) -> int:
                     f"Ingested {stats['ingested']} transcript(s), "
                     f"skipped {stats['skipped_duplicates']} duplicate(s)"
                 )
+
+        elif args.command == "intake-lead":
+            from relationship_intel.cold_intake import intake_qualified_lead, load_qualified_lead
+
+            lead = load_qualified_lead(args.record)
+            result = intake_qualified_lead(pipeline.open_repo(settings), lead)
+            if args.json_output:
+                _print_json(result)
+            else:
+                print(f"Queued cold lead {lead.name} as person {result['person_id']}")
 
         elif args.command == "sync-crm":
             stats = pipeline.run_sync(settings, args.crm)

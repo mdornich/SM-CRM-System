@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS people (
     review_status TEXT NOT NULL DEFAULT 'unreviewed'
 );
 
+CREATE TABLE IF NOT EXISTS people_external_ids (
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    UNIQUE(provider, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_people_external_ids_person
+ON people_external_ids(person_id);
+
 CREATE TABLE IF NOT EXISTS lead_profiles (
     id INTEGER PRIMARY KEY,
     person_id INTEGER NOT NULL REFERENCES people(id),

@@ -143,7 +143,29 @@ class Repository:
 
     # -- people --------------------------------------------------------------
 
-    def resolve_person(self, person: Person, company_id: int | None) -> tuple[int, bool]:
+    def resolve_person(
+        self,
+        person: Person,
+        company_id: int | None,
+        external_ids: dict[str, str] | None = None,
+    ) -> tuple[int, bool]:
+        # Rule 0: an exact provider/external-id match is authoritative.
+        if external_ids:
+            placeholders = ",".join("(?, ?)" for _ in external_ids)
+            params = [value for item in external_ids.items() for value in item]
+            rows = self.conn.execute(
+                "SELECT DISTINCT person_id FROM people_external_ids"
+                f" WHERE (provider, external_id) IN ({placeholders})",
+                params,
+            ).fetchall()
+            if len(rows) > 1:
+                raise ValueError("external ids resolve to different people")
+            if rows:
+                person_id = rows[0]["person_id"]
+                self._backfill_person(person_id, person, company_id)
+                self.add_person_external_ids(person_id, external_ids)
+                return person_id, False
+
         # Rule 1: email match (case-insensitive, exact) — highest authority.
         if person.email:
             row = self.conn.execute(
@@ -151,6 +173,7 @@ class Repository:
             ).fetchone()
             if row:
                 self._backfill_person(row["id"], person, company_id)
+                self.add_person_external_ids(row["id"], external_ids or {})
                 return row["id"], False
 
         normalized = normalize_person_name(person.name)
@@ -163,6 +186,7 @@ class Repository:
             ).fetchone()
             if row:
                 self._backfill_person(row["id"], person, company_id)
+                self.add_person_external_ids(row["id"], external_ids or {})
                 return row["id"], False
 
         # Rule 3: name-only match with no company conflict -> medium confidence.
@@ -181,6 +205,7 @@ class Repository:
                     (row["id"],),
                 )
                 self._backfill_person(row["id"], person, company_id)
+                self.add_person_external_ids(row["id"], external_ids or {})
                 return row["id"], False
 
         # Rule 4: new person; flag near-duplicates (edit distance <= 2) for review.
@@ -208,7 +233,19 @@ class Repository:
             ),
         )
         self.conn.commit()
-        return cur.lastrowid, True
+        person_id = cur.lastrowid
+        self.add_person_external_ids(person_id, external_ids or {})
+        return person_id, True
+
+    def add_person_external_ids(self, person_id: int, external_ids: dict[str, str]) -> None:
+        """Attach stable external identities without moving an identity between people."""
+        for provider, external_id in external_ids.items():
+            self.conn.execute(
+                "INSERT INTO people_external_ids (person_id, provider, external_id)"
+                " VALUES (?, ?, ?) ON CONFLICT(provider, external_id) DO NOTHING",
+                (person_id, provider, external_id),
+            )
+        self.conn.commit()
 
     def _backfill_person(self, person_id: int, person: Person, company_id: int | None) -> None:
         """Fill missing fields on match; never overwrite existing values."""
