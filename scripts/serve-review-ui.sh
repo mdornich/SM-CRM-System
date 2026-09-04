@@ -1,26 +1,13 @@
 #!/usr/bin/env zsh
 # Persistent review UI server (gh #17 UX — no terminal needed).
-# Loaded by launchd via com.stablemischief.smcrm-reviewui.plist and kept
-# alive so the operator can just open http://127.0.0.1:8765/ in a browser.
+# Invoked by scripts/review-gate.sh, which launchd keeps alive via
+# com.stablemischief.smcrm-reviewgate.plist, so the operator can just open
+# http://127.0.0.1:8765/ in a browser. Run it directly only on a host that
+# already has the environment (it does no credential checking of its own).
 set -euo pipefail
 
-REPO_DIR="/Users/mitchdornich/Documents/GitHub/SM-CRM-System"
-cd "$REPO_DIR"
+source "${0:A:h}/_repo-env.sh"
 
-mkdir -p output/logs
-
-set -a
-source .env
-set +a
-
-# Venv is installed OUTSIDE ~/Documents/ so macOS TCC / Full Disk Access
-# never blocks the LaunchAgent context. Fallback to the repo-local dev
-# venv when the ~/.venvs one is missing (useful for `./scripts/…` runs
-# by a fresh clone before install).
-VENV="$HOME/.venvs/sm-crm-system"
-if [[ ! -d "$VENV" ]]; then
-    VENV="$REPO_DIR/.venv"
-fi
-source "$VENV/bin/activate"
-
-exec python -m relationship_intel.cli review-ui --host 127.0.0.1 --port 8765
+# "$@" is forwarded so `review-gate.sh --port 9000` actually changes the port;
+# later argparse values win over the defaults above.
+exec python -m relationship_intel.cli review-ui --host 127.0.0.1 --port 8765 "$@"

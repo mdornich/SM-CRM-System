@@ -97,6 +97,58 @@ Fleet integration uses `scripts/fleet-crm-source-report.sh`, a read-only wrapper
 that emits the `report` command's Contract-1 JSON for the 980labsOS
 `crm-source` registry entry.
 
+## Mac mini review gate (980labsOS Phase 13A S1 §5.2)
+
+The production checkout is on the **Mac mini** at
+`/Users/980macmini/Documents/GitHub/SM-CRM-System`, alongside Twenty
+(`http://127.0.0.1:3002`). Every shell entrypoint in `scripts/` resolves its repo
+root from its own location (`scripts/_repo-env.sh`), so the same scripts run on
+either machine.
+
+**There is no `.env` on the mini and none should be created.** Secrets are
+rendered by the 980labsOS 8D Infisical Agent and injected for one child process
+by `with-8d-env.sh`. `scripts/_repo-env.sh` merges `.env` at the **lowest**
+precedence and only when the file exists, so on a dev machine that does have one
+the injected values still win — an unconditional shell-level load would clobber
+them before Python ever ran. `load_settings()` then reads `os.environ`.
+
+Run anything on the mini like this:
+
+```bash
+~/Documents/GitHub/980labsOS-deploy/scripts/with-8d-env.sh -- \
+  ~/Documents/GitHub/SM-CRM-System/.venv/bin/python -m relationship_intel.cli review-queue --json
+```
+
+The always-on review gate itself is
+`scripts/launchd/com.stablemischief.smcrm-reviewgate.plist` →
+`scripts/review-gate.sh` (re-execs through `with-8d-env.sh`, then serves
+`review-ui` on `127.0.0.1:8765`). It **refuses to start** (exit 78) when the
+wrapper is missing or `TWENTY_API_KEY` is empty, rather than coming up green
+backed by the mock CRM — an approval gate that gates nothing is worse than one
+that is down. `KeepAlive` is a dictionary (`SuccessfulExit` + `Crashed`), not
+`<true/>`: launchd ORs those conditions and stops the job when neither matches,
+so a configuration refusal stays stopped instead of respawning every 10s
+forever, while a clean exit or a signal death still brings the gate back. After
+fixing the configuration, `launchctl kickstart -k gui/$(id -u)/com.stablemischief.smcrm-reviewgate`. It also creates its own log directory, because launchd creates the
+log file but not its parent.
+
+This plist **replaces `com.stablemischief.smcrm-reviewui.plist`**, removed in the
+same change. Both bound `127.0.0.1:8765`; with `KeepAlive` and a 10s
+`ThrottleInterval`, loading both leaves one crash-looping indefinitely. Unload
+the old one first:
+
+```bash
+launchctl bootout gui/$(id -u)/com.stablemischief.smcrm-reviewui 2>/dev/null || true
+rm -f ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewui.plist
+
+cp scripts/launchd/com.stablemischief.smcrm-reviewgate.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewgate.plist
+launchctl list com.stablemischief.smcrm-reviewgate
+```
+
+Logs land in `~/.980labsOS/smcrm/review-gate.{out,err}.log`. The job is
+registered in 980labsOS `docs/standards/recurring-job-routing.md`.
+
 ## Tests & CI
 
 ```bash

@@ -1,23 +1,7 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-REPO_DIR="/Users/mitchdornich/Documents/GitHub/SM-CRM-System"
-cd "$REPO_DIR"
-
-mkdir -p output/logs
-
-set -a
-source .env
-set +a
-
-# Venv is installed OUTSIDE ~/Documents/ so macOS TCC / Full Disk Access
-# never blocks the LaunchAgent context. Fallback to repo-local venv for
-# fresh clones that haven't run the install yet.
-VENV="$HOME/.venvs/sm-crm-system"
-if [[ ! -d "$VENV" ]]; then
-    VENV="$REPO_DIR/.venv"
-fi
-source "$VENV/bin/activate"
+source "${0:A:h}/_repo-env.sh"
 
 python -m relationship_intel.cli init --json
 python -m relationship_intel.cli ingest --json
