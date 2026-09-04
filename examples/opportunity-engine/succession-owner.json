@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "succession-owner",
+  "pack_version_id": "succession:foundation-v1",
+  "evidence": [
+    {
+      "id": "e0",
+      "source_type": "synthetic-interview",
+      "source_ref": "succession-owner",
+      "content_hash": "c840d0fafce9e7509ad0d3119258d267914dfe74b3ef4995935748267294fe9c",
+      "locator": "paragraph:1",
+      "excerpt": "I am the owner of this firm, thinking about selling next year.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    }
+  ],
+  "observations": [
+    {
+      "id": "o0",
+      "account_id": 1,
+      "evidence_id": "e0",
+      "predicate": "statement",
+      "value": "I am the owner of this firm, thinking about selling next year.",
+      "method": "synthetic-human-label",
+      "confidence": 1
+    }
+  ],
+  "expected": {
+    "classification": "warm",
+    "eligible": true,
+    "signal_keys": [
+      "owner",
+      "exit",
+      "timing"
+    ],
+    "timing_min": 60,
+    "timing_max": 60
+  },
+  "labeler": "synthetic-architecture-fixture",
+  "split": "development"
+}

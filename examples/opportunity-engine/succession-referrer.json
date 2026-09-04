@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "succession-referrer",
+  "pack_version_id": "succession:foundation-v1",
+  "evidence": [
+    {
+      "id": "e0",
+      "source_type": "synthetic-interview",
+      "source_ref": "succession-referrer",
+      "content_hash": "f71900cb4381cab4137901c66c1e1763f60041dfccd06ddaa6b9da255ca1f2ce",
+      "locator": "paragraph:1",
+      "excerpt": "I can connect you to clients thinking about selling next year.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    }
+  ],
+  "observations": [
+    {
+      "id": "o0",
+      "account_id": 1,
+      "evidence_id": "e0",
+      "predicate": "statement",
+      "value": "I can connect you to clients thinking about selling next year.",
+      "method": "synthetic-human-label",
+      "confidence": 1
+    }
+  ],
+  "expected": {
+    "classification": "referral_source",
+    "eligible": false,
+    "signal_keys": [],
+    "timing_max": 0
+  },
+  "labeler": "synthetic-architecture-fixture",
+  "split": "development"
+}

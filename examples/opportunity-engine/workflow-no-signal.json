@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "id": "workflow-no-signal",
+  "pack_version_id": "workflow-audit:fixture-v1",
+  "evidence": [
+    {
+      "id": "e0",
+      "source_type": "synthetic-interview",
+      "source_ref": "workflow-no-signal",
+      "content_hash": "347449d9738bedf61d1af73a69b282ea356b31b45cab0893ec7b175145b1f73d",
+      "locator": "paragraph:1",
+      "excerpt": "Our firm has 40 employees.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    },
+    {
+      "id": "e1",
+      "source_type": "synthetic-interview",
+      "source_ref": "workflow-no-signal",
+      "content_hash": "c3450b570f9a7f75192502c0cc0d1eabe59c216d0b85eb009b2031a91e449efa",
+      "locator": "paragraph:2",
+      "excerpt": "We are a professional-services firm.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    },
+    {
+      "id": "e2",
+      "source_type": "synthetic-interview",
+      "source_ref": "workflow-no-signal",
+      "content_hash": "c402f3e315abee51da723629467cbd24fa51704462afa9be4dd50201ce1e1f04",
+      "locator": "paragraph:3",
+      "excerpt": "We spend one hour weekly copying records.",
+      "captured_at": "2026-09-04T00:00:00Z"
+    }
+  ],
+  "observations": [
+    {
+      "id": "o0",
+      "account_id": 1,
+      "evidence_id": "e0",
+      "predicate": "employee_count",
+      "value": 40,
+      "method": "synthetic-human-label",
+      "confidence": 1
+    },
+    {
+      "id": "o1",
+      "account_id": 1,
+      "evidence_id": "e1",
+      "predicate": "industry",
+      "value": "professional_services",
+      "method": "synthetic-human-label",
+      "confidence": 1
+    },
+    {
+      "id": "o2",
+      "account_id": 1,
+      "evidence_id": "e2",
+      "predicate": "manual_hours_week",
+      "value": 1,
+      "method": "synthetic-human-label",
+      "confidence": 1
+    }
+  ],
+  "expected": {
+    "classification": "no_signal",
+    "eligible": false,
+    "signal_keys": [],
+    "timing_max": 0
+  },
+  "labeler": "synthetic-architecture-fixture",
+  "split": "development"
+}

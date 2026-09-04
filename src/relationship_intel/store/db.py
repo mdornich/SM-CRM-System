@@ -7,6 +7,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from relationship_intel.opportunity_engine.schema import SCHEMA_V2
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
     id INTEGER PRIMARY KEY,
@@ -159,4 +161,5 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
     _migrate(conn)
+    conn.executescript(SCHEMA_V2)
     return conn
