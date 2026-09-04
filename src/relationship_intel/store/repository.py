@@ -151,17 +151,11 @@ class Repository:
     ) -> tuple[int, bool]:
         # Rule 0: an exact provider/external-id match is authoritative.
         if external_ids:
-            placeholders = ",".join("(?, ?)" for _ in external_ids)
-            params = [value for item in external_ids.items() for value in item]
-            rows = self.conn.execute(
-                "SELECT DISTINCT person_id FROM people_external_ids"
-                f" WHERE (provider, external_id) IN ({placeholders})",
-                params,
-            ).fetchall()
-            if len(rows) > 1:
+            matches = self.people_for_external_ids(external_ids)
+            if len(matches) > 1:
                 raise ValueError("external ids resolve to different people")
-            if rows:
-                person_id = rows[0]["person_id"]
+            if matches:
+                person_id = matches[0]
                 self._backfill_person(person_id, person, company_id)
                 self.add_person_external_ids(person_id, external_ids)
                 return person_id, False
@@ -236,6 +230,31 @@ class Repository:
         person_id = cur.lastrowid
         self.add_person_external_ids(person_id, external_ids or {})
         return person_id, True
+
+    def people_for_external_ids(self, external_ids: dict[str, str]) -> list[int]:
+        """Local person ids that any of these provider/external-id pairs name.
+
+        Callers use this to detect a conflict BEFORE writing anything — more
+        than one id means the record mixes identities a human has to untangle.
+        """
+        if not external_ids:
+            return []
+        placeholders = ",".join("(?, ?)" for _ in external_ids)
+        params = [value for item in external_ids.items() for value in item]
+        rows = self.conn.execute(
+            "SELECT DISTINCT person_id FROM people_external_ids"
+            f" WHERE (provider, external_id) IN ({placeholders})",
+            params,
+        ).fetchall()
+        return [row["person_id"] for row in rows]
+
+    def person_external_id(self, person_id: int, provider: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT external_id FROM people_external_ids"
+            " WHERE person_id = ? AND provider = ? ORDER BY rowid LIMIT 1",
+            (person_id, provider),
+        ).fetchone()
+        return row["external_id"] if row else None
 
     def add_person_external_ids(self, person_id: int, external_ids: dict[str, str]) -> None:
         """Attach stable external identities without moving an identity between people."""

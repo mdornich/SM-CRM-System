@@ -21,6 +21,19 @@ def _payload_hash(payload: dict) -> str:
     return short_hash(json.dumps(payload, sort_keys=True))
 
 
+def _ref_matches_provider(adapter: CRMAdapter, existing: dict) -> bool:
+    """A cached ref is only usable against the CRM it came from.
+
+    Refs from `find_contact`/`find_company` carry no `provider` — they are
+    always produced by the adapter in hand, so an absent key means "this one".
+    Cold intake stamps `provider` explicitly because its ids come from Twenty
+    regardless of which adapter a later `sync-crm` run happens to use; without
+    this check a mock run would record a Twenty UUID as the mock CRM's id.
+    """
+    provider = existing.get("provider")
+    return provider is None or provider == adapter.provider
+
+
 def _resolve_person_ref(adapter: CRMAdapter, payload: dict, stats: dict | None = None) -> CRMRef:
     """Prefer the reviewer-confirmed `existing_crm_ref` from the review UI
     (gh #15) so we never create a duplicate Twenty contact for someone the
@@ -33,7 +46,7 @@ def _resolve_person_ref(adapter: CRMAdapter, payload: dict, stats: dict | None =
     written on brand-new records. The adapter's §4 transition guard decides
     whether a lifecycle move is actually applied."""
     existing = payload.get("existing_crm_ref")
-    if existing and existing.get("crm_id"):
+    if existing and existing.get("crm_id") and _ref_matches_provider(adapter, existing):
         ref = CRMRef(adapter.provider, "person", existing["crm_id"], existing.get("url"))
         update = getattr(adapter, "update_contact_gtm_fields", None)
         if update is not None and has_person_gtm_fields(payload):
@@ -58,7 +71,7 @@ def _resolve_person_ref(adapter: CRMAdapter, payload: dict, stats: dict | None =
 
 def _resolve_company_ref(adapter: CRMAdapter, payload: dict) -> CRMRef:
     existing = payload.get("existing_crm_ref")
-    if existing and existing.get("crm_id"):
+    if existing and existing.get("crm_id") and _ref_matches_provider(adapter, existing):
         return CRMRef(adapter.provider, "company", existing["crm_id"], existing.get("url"))
     return adapter.find_or_create_company(payload)
 
@@ -149,6 +162,15 @@ def sync_to_crm(
                 "title": person.title,
             }
         )
+        if review and isinstance(review.payload.get("existing_crm_ref"), dict):
+            # Carry the crosswalk even when the review gate is bypassed
+            # (CRM_REVIEW_REQUIRED=false). Without it this path rebuilds a bare
+            # {name, email, title} payload, `_resolve_person_ref` falls through
+            # to `find_or_create_contact`, and a known contact — a cold lead
+            # that already exists in Twenty, say — gets duplicated, with
+            # `_sync_object` then overwriting the crosswalk with the duplicate's
+            # id. GTM fields still ride only on the reviewed payload.
+            payload.setdefault("existing_crm_ref", review.payload["existing_crm_ref"])
         payload["company_crm_id"] = company_refs.get(person.company_id)
         state, pushed = _sync_object(
             repo,

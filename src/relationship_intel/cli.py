@@ -330,7 +330,11 @@ def main(argv: list[str] | None = None) -> int:
             from relationship_intel.cold_intake import intake_qualified_lead, load_qualified_lead
 
             try:
+                # Intake is inside the guard too: it raises the same way when a
+                # record mixes ids that were previously intaken under two
+                # different people.
                 lead = load_qualified_lead(args.record)
+                result = intake_qualified_lead(pipeline.open_repo(settings), lead)
             except (OSError, ValueError) as exc:
                 # The record is hand-authored JSON, so a bad wedge or a missing
                 # proof pointer is the expected failure here — report it rather
@@ -341,7 +345,6 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     print(f"Invalid lead record {args.record}: {exc}", file=sys.stderr)
                 return 2
-            result = intake_qualified_lead(pipeline.open_repo(settings), lead)
             if args.json_output:
                 _print_json(result)
             else:

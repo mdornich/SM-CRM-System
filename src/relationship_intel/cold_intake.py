@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -11,14 +12,25 @@ from relationship_intel.crm.twenty_adapter import LIFECYCLE_STAGE_VALUES, WEDGE_
 from relationship_intel.extraction.schemas import Company, Person
 from relationship_intel.store.repository import Repository
 
+logger = logging.getLogger(__name__)
+
 
 def _canonical_option(value: str) -> str:
     return re.sub(r"[^0-9A-Za-z]+", "_", value.strip()).strip("_").upper()
 
 
 def _canonical_linkedin_url(value: str) -> str:
+    """Fold the ways one profile URL gets written into a single identity.
+
+    Scheme and `www.` are part of that: `http://www.linkedin.com/in/ada`,
+    `linkedin.com/in/ada` and the https form name the same person, and three
+    distinct external ids would make Rule 0 miss and silently drop back to the
+    name/email fallbacks this path exists to pre-empt.
+    """
     canonical = value.strip().split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
-    return canonical.replace("https://www.linkedin.com/", "https://linkedin.com/", 1)
+    canonical = re.sub(r"^[a-z][a-z0-9+.-]*://", "", canonical)
+    canonical = re.sub(r"^www\.", "", canonical)
+    return f"https://{canonical}"
 
 
 class QualifiedLead(BaseModel):
@@ -56,12 +68,20 @@ def load_qualified_lead(path: Path) -> QualifiedLead:
 
 def intake_qualified_lead(repo: Repository, lead: QualifiedLead) -> dict:
     """Create the local crosswalk and pending proposal; repeated input is a no-op."""
-    company_id, company_created = repo.resolve_company(Company(name=lead.firm))
     external_ids = {
         "twenty": lead.twenty_person_id,
         "eos-prospect": lead.prospect_id,
         "linkedin": _canonical_linkedin_url(lead.linkedin_url),
     }
+    # Check for mixed identities BEFORE the first write. `resolve_person`
+    # raises on this too, but by then `resolve_company` has already committed
+    # a row, leaving an orphan company behind every rejected record.
+    if len(repo.people_for_external_ids(external_ids)) > 1:
+        raise ValueError(
+            f"external ids for {lead.name!r} resolve to different people; "
+            "resolve the duplicate before intaking this record"
+        )
+    company_id, company_created = repo.resolve_company(Company(name=lead.firm))
     person_id, person_created = repo.resolve_person(
         Person(name=lead.name, email=lead.email, title=lead.title), company_id, external_ids
     )
@@ -73,6 +93,17 @@ def intake_qualified_lead(repo: Repository, lead: QualifiedLead) -> dict:
     sync_state = repo.get_sync_state("twenty", "person", person_id)
     if sync_state is None:
         repo.set_sync_state("twenty", "person", person_id, lead.twenty_person_id, None, "")
+    elif sync_state["crm_id"] != lead.twenty_person_id:
+        # The record and the crosswalk disagree about which Twenty person this
+        # is. Don't pick a winner silently — the operator has to say which one
+        # is right, and the existing crosswalk is what sync already trusts.
+        logger.warning(
+            "cold intake for %r names Twenty person %s but the crosswalk already"
+            " points at %s; leaving the crosswalk alone",
+            lead.name,
+            lead.twenty_person_id,
+            sync_state["crm_id"],
+        )
     wedge = _canonical_option(lead.wedge)
     payload = {
         "name": lead.name,
@@ -123,9 +154,13 @@ def _queue_review_item(repo: Repository, person_id: int, label: str, payload: di
         for key, value in payload.items()
         if value is not None and existing.payload.get(key) is None
     }
-    if not isinstance(existing.payload.get("existing_crm_ref"), dict):
-        # A ref flattened to a string by an older form round-trip is unusable
-        # to `_resolve_person_ref`; replace it with the authoritative one.
+    if existing.payload.get("existing_crm_ref") != payload["existing_crm_ref"]:
+        # The intake record is the authority on which Twenty person this is, so
+        # replace whatever is stored. Two ways the stored value goes wrong: a
+        # ref flattened to a string by an older form round-trip, and a ref
+        # `rebuild_review_queue` cached from a name/email lookup that matched a
+        # stale duplicate contact. Left in place, the second one sends this
+        # lead's GTM fields to the wrong Twenty record.
         updates["existing_crm_ref"] = payload["existing_crm_ref"]
     if not updates:
         return "unchanged"

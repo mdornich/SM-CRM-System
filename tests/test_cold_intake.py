@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 
 import pytest
@@ -348,3 +349,137 @@ def test_review_form_shows_wedge_and_proof_without_offering_them_back(tmp_path):
     assert 'name="value__proof_pointers"' not in rendered
     assert 'value="wedge"' not in rendered
     assert 'value="proof_pointers"' not in rendered
+
+
+def test_linkedin_urls_for_one_profile_canonicalize_to_one_identity(tmp_path):
+    repo = _repo(tmp_path)
+    first = intake_qualified_lead(repo, _lead())
+    for index, url in enumerate(
+        [
+            "http://www.linkedin.com/in/ada",
+            "linkedin.com/in/ada/",
+            "HTTPS://WWW.LinkedIn.com/in/Ada?utm_source=x",
+        ],
+        start=2,
+    ):
+        result = intake_qualified_lead(
+            repo,
+            _lead(
+                twenty_person_id=f"twenty-{index}",
+                prospect_id=f"prospect-{index}",
+                name="Ada Byron",
+                linkedin_url=url,
+            ),
+        )
+        assert result["person_id"] == first["person_id"], url
+
+    assert repo.conn.execute("SELECT count(*) FROM people").fetchone()[0] == 1
+    linkedin_ids = repo.conn.execute(
+        "SELECT DISTINCT external_id FROM people_external_ids WHERE provider = 'linkedin'"
+    ).fetchall()
+    assert [row["external_id"] for row in linkedin_ids] == ["https://linkedin.com/in/ada"]
+
+
+def test_mixed_identities_are_rejected_before_any_write(tmp_path):
+    repo = _repo(tmp_path)
+    intake_qualified_lead(repo, _lead())
+    intake_qualified_lead(
+        repo,
+        _lead(
+            twenty_person_id="twenty-2",
+            prospect_id="prospect-2",
+            name="Grace Hopper",
+            firm="Naval Systems",
+            linkedin_url="https://linkedin.com/in/grace",
+        ),
+    )
+    companies_before = repo.conn.execute("SELECT count(*) FROM companies").fetchone()[0]
+
+    # A record that names Ada's Twenty id and Grace's LinkedIn profile.
+    with pytest.raises(ValueError, match="different people"):
+        intake_qualified_lead(
+            repo, _lead(firm="Brand New Firm", linkedin_url="https://linkedin.com/in/grace")
+        )
+
+    # No orphan company left behind by the rejected record.
+    assert repo.conn.execute("SELECT count(*) FROM companies").fetchone()[0] == companies_before
+
+
+def test_intake_replaces_a_crm_ref_cached_from_a_stale_duplicate_contact(tmp_path):
+    """`rebuild_review_queue` caches whatever `find_contact` name-matched.
+
+    When that was a stale duplicate, the intake record — which carries the
+    authoritative Twenty person id — has to win, or approval writes this
+    lead's GTM fields onto the wrong Twenty record.
+    """
+    repo = _repo(tmp_path)
+    company_id, _ = repo.resolve_company(Company(name="Analytical Engines LLC"))
+    person_id, _ = repo.resolve_person(Person(name="Ada Lovelace"), company_id)
+    repo.upsert_review_item(
+        "person",
+        person_id,
+        "Ada Lovelace",
+        {
+            "name": "Ada Lovelace",
+            "existing_crm_ref": {
+                "provider": "twenty",
+                "object_type": "person",
+                "crm_id": "twenty-STALE-DUPLICATE",
+            },
+        },
+    )
+
+    assert intake_qualified_lead(repo, _lead())["review_item"] == "updated"
+
+    item = repo.review_item("person", person_id)
+    assert item is not None
+    assert item.payload["existing_crm_ref"]["crm_id"] == "twenty-1"
+
+
+def test_crosswalk_conflict_is_logged_rather_than_silently_repointed(tmp_path, caplog):
+    repo = _repo(tmp_path)
+    result = intake_qualified_lead(repo, _lead())
+
+    with caplog.at_level(logging.WARNING, logger="relationship_intel.cold_intake"):
+        intake_qualified_lead(
+            repo,
+            _lead(twenty_person_id="twenty-OTHER", prospect_id="prospect-2", name="Ada Byron"),
+        )
+
+    assert "twenty-OTHER" in caplog.text
+    state = repo.get_sync_state("twenty", "person", result["person_id"])
+    assert state["crm_id"] == "twenty-1"
+
+
+def test_bypassing_the_review_gate_still_uses_the_twenty_crosswalk(settings):
+    """`CRM_REVIEW_REQUIRED=false` must not turn into "create a duplicate"."""
+
+    class _Adapter(_UpdateOnlyAdapter):
+        # Bypassing the gate syncs the company too; that is orthogonal here.
+        def find_or_create_company(self, payload):
+            return CRMRef("twenty", "company", "company-1")
+
+    repo = pipeline.open_repo(settings)
+    result = intake_qualified_lead(repo, _lead())
+    adapter = _Adapter()
+
+    stats = sync_to_crm(pipeline.open_repo(settings), adapter, "James", approved_only=False)
+
+    assert stats["people"] == 1
+    assert adapter.creates == []
+    # GTM fields still ride only on the reviewed payload, so no update fires —
+    # the point is that the person resolved to the known Twenty record.
+    state = pipeline.open_repo(settings).get_sync_state("twenty", "person", result["person_id"])
+    assert state["crm_id"] == "twenty-1"
+
+
+def test_a_twenty_ref_is_not_reused_against_a_different_provider(tmp_path):
+    from relationship_intel.crm.sync import _ref_matches_provider
+
+    class _Mock:
+        provider = "mock"
+
+    twenty_ref = {"provider": "twenty", "object_type": "person", "crm_id": "twenty-1"}
+    assert not _ref_matches_provider(_Mock(), twenty_ref)
+    # Adapter-produced refs carry no provider and stay usable.
+    assert _ref_matches_provider(_Mock(), {"crm_id": "mock-1"})
