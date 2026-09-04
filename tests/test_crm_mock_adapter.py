@@ -46,6 +46,7 @@ def test_review_required_sync_only_pushes_approved_items(settings, samples_dir):
         "skipped": 0,
         "skipped_by_stage": 0,
         "skipped_not_approved": 8,
+        "gtm_write_failed": 0,
     }
 
     repo = pipeline.open_repo(reviewed)
