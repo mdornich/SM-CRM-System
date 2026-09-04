@@ -76,7 +76,7 @@ def test_doctor_ok_for_twenty_probe_success(tmp_path, monkeypatch):
     )
 
     def ok(self):
-        return {"fields": []}
+        return {"opportunity": {"id": "o", "fields": []}, "person": {"id": "p", "fields": []}}
 
     monkeypatch.setattr(TwentyCRMAdapter, "_objects_metadata", ok)
 
@@ -84,6 +84,30 @@ def test_doctor_ok_for_twenty_probe_success(tmp_path, monkeypatch):
 
     checks = {check["name"]: check for check in report["checks"]}
     assert checks["twenty"]["status"] == "ok"
+
+
+def test_doctor_blocks_when_twenty_workspace_is_missing_person(tmp_path, monkeypatch):
+    """The probe must assert the objects sync provisions onto, not merely that
+    the metadata endpoint answered — a workspace with no `person` is not ready."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    settings = Settings(
+        crm_provider="twenty",
+        twenty_api_key="test-key",
+        obsidian_vault_path=tmp_path / "vault",
+        transcripts_inbox_dir=tmp_path / "inbox",
+        db_path=tmp_path / "ri.db",
+    )
+
+    def only_opportunity(self):
+        return {"opportunity": {"id": "o", "fields": []}}
+
+    monkeypatch.setattr(TwentyCRMAdapter, "_objects_metadata", only_opportunity)
+
+    report = run_doctor(settings, repo_root=_repo_root(tmp_path))
+
+    checks = {check["name"]: check for check in report["checks"]}
+    assert checks["twenty"]["status"] == "blocked"
+    assert "person" in checks["twenty"]["message"]
 
 
 def test_doctor_ok_for_codex_provider_when_cli_exists(tmp_path, monkeypatch):

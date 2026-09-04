@@ -93,25 +93,20 @@ _TIMING_WINDOW_FROM_TWENTY = {value: key for key, value in _TIMING_WINDOW_TO_TWE
 
 # --- Person GTM fields (Succession gtm-crm-architecture.md §4) ------------------
 # Option labels/values/colors/positions below were read live (GET only) from the
-# running Twenty on the mini on 2026-09-03 via /rest/metadata/objects, so
-# PERSON_CUSTOM_FIELDS provisions exactly what already exists there and
-# ensure_schema stays a no-op against that workspace.
-#
-# NOTE: live `wedge` carries a sixth option `NA` that the spec's §4 value list
-# does not contain. It is supported here (writing a value Twenty rejects is
-# worse than carrying a stray option) and flagged for Mitch to decide — either
-# ratify NA in the spec or delete it in Twenty.
+# running Twenty on the mini via /rest/metadata/objects, so PERSON_CUSTOM_FIELDS
+# provisions exactly what already exists there and ensure_schema stays a no-op
+# against that workspace. Re-verified 2026-09-03 after Mitch removed a stray
+# live-only `NA` wedge option: `wedge` and `wedgePrimary` now carry exactly the
+# five §4 values, so `NA` fails closed like any other unknown value.
 _WEDGE_OPTIONS = [
     ("EOS Practitioner", "EOS_PRACTITIONER", "green"),
     ("Acquirer", "ACQUIRER", "jade"),
     ("Exit Planner", "EXIT_PLANNER", "mint"),
     ("XPX", "XPX", "turquoise"),
     ("Other", "OTHER", "cyan"),
-    ("NA", "NA", "sky"),  # live-only; not in gtm-crm-architecture.md §4
 ]
-# Wedge-Primary is single-valued and, per §4, carries the same value set minus
-# the stray NA — matching the live workspace.
-_WEDGE_PRIMARY_OPTIONS = [option for option in _WEDGE_OPTIONS if option[1] != "NA"]
+# Wedge-Primary is single-valued over the same §4 value set.
+_WEDGE_PRIMARY_OPTIONS = list(_WEDGE_OPTIONS)
 # §4 order: Cold -> Contacted -> Engaged -> Meeting -> Opportunity -> Customer /
 # Lost / Nurture. The adapter models no Person stage machine (Twenty owns stage
 # on Opportunity, not Person), so lifecycleStage writes are plain value writes —
@@ -258,7 +253,13 @@ def person_custom_field_body(person: dict) -> dict:
             continue
         if isinstance(value, str) or not isinstance(value, (list, tuple)):
             raise ValueError(f"{key} must be a list of option values, got {value!r}")
-        body[field_name] = [_coerce_option(item, key, allowed) for item in value]
+        # Normalisation collapses variants onto one canonical value, so
+        # ["Other", "other"] would otherwise send a duplicate. De-duplicate
+        # while preserving the caller's order.
+        seen: dict[str, None] = {}
+        for item in value:
+            seen.setdefault(_coerce_option(item, key, allowed), None)
+        body[field_name] = list(seen)
     for key, field_name in PERSON_TEXT_FIELDS.items():
         if key not in person:
             continue
@@ -267,6 +268,45 @@ def person_custom_field_body(person: dict) -> dict:
             raise ValueError(f"{key} must be a string, got {type(value).__name__}")
         body[field_name] = value
     return body
+
+
+PERSON_GTM_KEYS = (
+    frozenset(PERSON_SELECT_FIELDS)
+    | frozenset(PERSON_MULTI_SELECT_FIELDS)
+    | frozenset(PERSON_TEXT_FIELDS)
+)
+
+# §4 progression stages, in order. LOST and NURTURE sit outside it: §4 says
+# "Any -> Lost" and "Any -> Nurture", so they are reachable from anywhere and
+# are never treated as a later stage.
+_LIFECYCLE_PROGRESSION = ("COLD", "CONTACTED", "ENGAGED", "MEETING", "OPPORTUNITY", "CUSTOMER")
+_LIFECYCLE_TERMINAL = frozenset({"LOST", "NURTURE"})
+
+
+def has_person_gtm_fields(person: dict) -> bool:
+    """True when the payload carries at least one of the four GTM Person keys."""
+    return not PERSON_GTM_KEYS.isdisjoint(person)
+
+
+def lifecycle_is_forward(current: str | None, proposed: str) -> bool:
+    """§4 transition guard. A sync may only move a person forward along the
+    progression, or park them in a terminal stage (Lost / Nurture). It may
+    never regress a stage, re-write the same stage, or auto-revive someone a
+    human parked in Lost / Nurture — same "manual Twenty edits win" rule the
+    opportunity PATCH path applies to reviewStatus."""
+    if not current or (
+        current not in _LIFECYCLE_PROGRESSION and current not in _LIFECYCLE_TERMINAL
+    ):
+        return True  # nothing known to protect
+    if current == proposed:
+        return False
+    if current in _LIFECYCLE_TERMINAL:
+        return False
+    if proposed in _LIFECYCLE_TERMINAL:
+        return True
+    if proposed not in _LIFECYCLE_PROGRESSION:
+        return True
+    return _LIFECYCLE_PROGRESSION.index(proposed) > _LIFECYCLE_PROGRESSION.index(current)
 
 
 def _filter_safe(value: str | None) -> str | None:
@@ -426,20 +466,27 @@ class TwentyCRMAdapter(CRMAdapter):
     def _twenty_person_dict(self, record: dict) -> dict:
         name_obj = record.get("name") or {}
         emails_obj = record.get("emails") or {}
-        return {
+        result = {
             "crm_id": str(record["id"]),
             "url": None,
             "name": f"{name_obj.get('firstName', '')} {name_obj.get('lastName', '')}".strip(),
             "email": emails_obj.get("primaryEmail"),
             "company_name": (record.get("company") or {}).get("name"),
-            # GTM Person custom fields (gtm-crm-architecture.md §4). Returned as
-            # the canonical Twenty option values so a read/write round-trip is
-            # value-stable; `wedge` is a list even when Twenty returns null.
-            "wedge": list(record.get("wedge") or []),
-            "wedge_primary": record.get("wedgePrimary"),
-            "source": record.get("source") or None,
-            "lifecycle_stage": record.get("lifecycleStage"),
         }
+        # GTM Person custom fields (gtm-crm-architecture.md §4), as canonical
+        # Twenty option values so a read/write round-trip is value-stable.
+        # A field Twenty has UNSET is omitted entirely rather than reported as
+        # None/[] — the write path treats a present key as "write this", so
+        # emitting unset fields would turn a round-trip into a clearing write.
+        if record.get("wedge"):
+            result["wedge"] = list(record["wedge"])
+        if record.get("wedgePrimary"):
+            result["wedge_primary"] = record["wedgePrimary"]
+        if record.get("source"):
+            result["source"] = record["source"]
+        if record.get("lifecycleStage"):
+            result["lifecycle_stage"] = record["lifecycleStage"]
+        return result
 
     def _twenty_company_dict(self, record: dict) -> dict:
         domain_obj = record.get("domainName") or {}
@@ -469,7 +516,19 @@ class TwentyCRMAdapter(CRMAdapter):
                 f"and(name.firstName[eq]:{safe_first},name.lastName[eq]:{safe_last})",
             )
             if existing:
-                return self._update_person_custom_fields(existing, custom_fields)
+                # The first+last-name match is a dedup HEURISTIC, not an
+                # identity: two different "John Smith" rows are ordinary. It is
+                # safe to reuse the ref (worst case we attach a note to the
+                # wrong twin, which a human can see and move) but NOT to write
+                # GTM fields, which would silently overwrite the other twin's
+                # wedge / source / lifecycle stage. Email is the only match
+                # strong enough to write on.
+                if custom_fields:
+                    logger.info(
+                        "twenty person GTM write skipped: matched by name heuristic, "
+                        "not email — refusing to overwrite fields on a possible namesake"
+                    )
+                return self._ref("person", existing)
         body: dict = {"name": {"firstName": first, "lastName": last}}
         if email:
             body["emails"] = {"primaryEmail": email}
@@ -489,18 +548,55 @@ class TwentyCRMAdapter(CRMAdapter):
         """PATCH only the GTM custom fields the caller supplied. Fields the
         caller omitted are never sent, so a manual edit in Twenty survives a
         re-sync — same rule the opportunity PATCH path applies to reviewStatus.
-        Lifecycle-stage writes are plain value writes: the adapter models no
-        Person stage machine, so §4's ordered transitions are not enforced here.
+
+        `lifecycleStage` gets the same protection through §4's ordered
+        transitions: only a forward move (or a move into Lost / Nurture, which
+        §4 allows from any stage) is written. A regression, a no-op rewrite of
+        the current stage, or an auto-revival out of Lost / Nurture is dropped
+        and logged, so a repeated sync can never walk a human's manual edit
+        backwards.
         """
-        if custom_fields:
-            self._request("PATCH", f"/people/{existing['id']}", json=custom_fields)
+        body = dict(custom_fields)
+        proposed = body.get("lifecycleStage")
+        if proposed is not None:
+            current = self._current_lifecycle_stage(existing)
+            if not lifecycle_is_forward(current, proposed):
+                logger.info(
+                    "twenty lifecycleStage write skipped for person %s: %s -> %s is not a "
+                    "forward transition (gtm-crm-architecture.md §4)",
+                    existing["id"],
+                    current,
+                    proposed,
+                )
+                body.pop("lifecycleStage")
+        if body:
+            self._request("PATCH", f"/people/{existing['id']}", json=body)
         return self._ref("person", existing)
 
-    def update_contact(self, ref: CRMRef, person: dict) -> CRMRef:
-        """Update an already-known person's GTM custom fields. Validates before
-        writing; omitted keys are left untouched."""
+    def _current_lifecycle_stage(self, existing: dict) -> str | None:
+        """Twenty's current stage for this person. A record read through
+        `_find_one` already carries the field; a bare {"id": ...} (the
+        update_contact_gtm_fields path) needs one extra read-only lookup —
+        the guard must never run blind."""
+        if "lifecycleStage" in existing:
+            return existing.get("lifecycleStage")
+        fetched = self._find_one("people", f"id[eq]:{existing['id']}")
+        return (fetched or {}).get("lifecycleStage")
+
+    def update_contact_gtm_fields(self, ref: CRMRef, person: dict) -> CRMRef:
+        """Write the four GTM Person custom fields onto an already-known
+        person. Validates before writing; keys the caller omitted are left
+        untouched. Raises when the payload carries none of the four, rather
+        than reporting success for a call that wrote nothing."""
         if ref.object_type != "person":
-            raise ValueError(f"update_contact expects a person ref, got {ref.object_type!r}")
+            raise ValueError(
+                f"update_contact_gtm_fields expects a person ref, got {ref.object_type!r}"
+            )
+        if not has_person_gtm_fields(person):
+            raise ValueError(
+                "update_contact_gtm_fields called with none of the GTM Person keys "
+                f"({', '.join(sorted(PERSON_GTM_KEYS))}); nothing would be written."
+            )
         return self._update_person_custom_fields(
             {"id": ref.crm_id}, person_custom_field_body(person)
         )

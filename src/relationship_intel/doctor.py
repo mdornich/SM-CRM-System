@@ -159,9 +159,21 @@ def _check_twenty(settings: Settings) -> Check:
     try:
         from relationship_intel.crm.twenty_adapter import TwentyCRMAdapter
 
-        TwentyCRMAdapter(settings.twenty_api_url, settings.twenty_api_key)._objects_metadata()
+        objects = TwentyCRMAdapter(
+            settings.twenty_api_url, settings.twenty_api_key
+        )._objects_metadata()
     except Exception as exc:  # noqa: BLE001 — readiness report degrades, never raises
         return Check("twenty", "blocked", "Twenty metadata API unreachable", str(exc))
+    # Reaching the endpoint is not readiness: sync provisions custom fields on
+    # both objects, so a workspace missing either is not ready.
+    missing = [name for name in ("opportunity", "person") if name not in objects]
+    if missing:
+        return Check(
+            "twenty",
+            "blocked",
+            f"Twenty workspace is missing object(s): {', '.join(missing)}",
+            "check the API key's workspace and the DATA_MODEL settings permission",
+        )
     return Check("twenty", "ok", "Twenty metadata API reachable")
 
 

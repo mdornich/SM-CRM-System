@@ -10,7 +10,7 @@ import json
 import logging
 
 from relationship_intel.crm.base import CRMAdapter, CRMRef, NotePayload, TaskPayload
-from relationship_intel.crm.twenty_adapter import NO_OPP_STAGES
+from relationship_intel.crm.twenty_adapter import NO_OPP_STAGES, has_person_gtm_fields
 from relationship_intel.store.repository import Repository
 from relationship_intel.util.hashing import short_hash
 
@@ -25,10 +25,20 @@ def _resolve_person_ref(adapter: CRMAdapter, payload: dict) -> CRMRef:
     """Prefer the reviewer-confirmed `existing_crm_ref` from the review UI
     (gh #15) so we never create a duplicate Twenty contact for someone the
     review workflow already flagged as a follow-up. Falls back to the
-    adapter's find_or_create when no ref is cached."""
+    adapter's find_or_create when no ref is cached.
+
+    The cached-ref path still writes the GTM Person custom fields: an
+    already-matched contact is exactly the case those fields exist for, and
+    short-circuiting straight to a bare CRMRef would mean they were only ever
+    written on brand-new records. The adapter's §4 transition guard decides
+    whether a lifecycle move is actually applied."""
     existing = payload.get("existing_crm_ref")
     if existing and existing.get("crm_id"):
-        return CRMRef(adapter.provider, "person", existing["crm_id"], existing.get("url"))
+        ref = CRMRef(adapter.provider, "person", existing["crm_id"], existing.get("url"))
+        update = getattr(adapter, "update_contact_gtm_fields", None)
+        if update is not None and has_person_gtm_fields(payload):
+            update(ref, payload)
+        return ref
     return adapter.find_or_create_contact(payload)
 
 

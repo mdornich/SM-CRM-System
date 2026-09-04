@@ -78,8 +78,8 @@ carries on the mini (values read live, GET only, 2026-09-03):
 
 | Person dict key | Twenty field | Type | Allowed values |
 |---|---|---|---|
-| `wedge` | `wedge` | MULTI_SELECT | `EOS_PRACTITIONER` `ACQUIRER` `EXIT_PLANNER` `XPX` `OTHER` `NA` |
-| `wedge_primary` | `wedgePrimary` | SELECT | same, minus `NA` |
+| `wedge` | `wedge` | MULTI_SELECT | `EOS_PRACTITIONER` `ACQUIRER` `EXIT_PLANNER` `XPX` `OTHER` |
+| `wedge_primary` | `wedgePrimary` | SELECT | same five values |
 | `source` | `source` | TEXT | free text (`warm-james`, `cold-eos-list`, ...) |
 | `lifecycle_stage` | `lifecycleStage` | SELECT | `COLD` `CONTACTED` `ENGAGED` `MEETING` `OPPORTUNITY` `CUSTOMER` `LOST` `NURTURE` |
 
@@ -89,14 +89,18 @@ carries on the mini (values read live, GET only, 2026-09-03):
 - An unrecognised select / multi-select value raises `ValueError` **before any
   HTTP request** — never a silent drop and never a partial write.
 - Keys absent from the person dict are absent from the request body, so
-  `find_or_create_contact` on an existing record and `update_contact` PATCH only
-  what the caller named; manual edits in Twenty survive a re-sync.
-- **Lifecycle transitions are not enforced.** §4 lists an ordered progression
-  (`Cold → Contacted → Engaged → Meeting → Opportunity → Customer / Lost /
-  Nurture`), but the adapter models no Person stage machine — it writes the value
-  it is given. `LIFECYCLE_STAGE_ORDER` records the order for callers that want it.
-- **Open item:** the live `wedge` field carries a sixth option `NA` that §4 does
-  not list. The adapter supports it; whether it is ratified into the spec or
-  removed from Twenty is Mitch's call.
+  `find_or_create_contact` on an existing record and `update_contact_gtm_fields`
+  PATCH only what the caller named; manual edits in Twenty survive a re-sync.
+- **Only an email match is written on.** The `and(firstName, lastName)` fallback
+  is a dedup heuristic, not an identity — two "John Smith" rows are ordinary — so
+  a name-path match reuses the ref but skips the GTM write and logs why.
+- **Lifecycle writes move forward only.** §4's progression
+  (`Cold → Contacted → Engaged → Meeting → Opportunity → Customer`, plus
+  `Any → Lost` / `Any → Nurture`) is enforced: a regression, a no-op rewrite of
+  the current stage, or an auto-revival out of `Lost`/`Nurture` is dropped and
+  logged, so a repeated sync can never walk a manual edit backwards. The other
+  three fields still write in that same PATCH.
+- `find_contact` **omits** a field Twenty has unset rather than reporting
+  `None`/`[]`, because a present key means "write this" on the update path.
 - Upstream moves fast; after pulling the fork, re-verify the composite shapes
   before trusting the adapter.
