@@ -1,7 +1,8 @@
 # Phase 13A C3 → C3b confidence mismatch
 
-Status: implementation stopped under the ratified #1261 round-2 brief §7
-(2026-09-04). This is a finding, not a completed integration contract.
+Status: only the C3 → C3b mapper is stopped under the ratified #1261 round-2
+brief §7 (2026-09-04). Independent fixture and C4 intake coverage is implemented.
+This is a finding, not a completed integration contract.
 
 ## Observed contracts
 
@@ -15,7 +16,7 @@ The merged 980labsOS producer at commit
 The SM-CRM consumer at commit `0e92e1ff916a40c0fcf6bc825fb01ee4beff5119`,
 `src/relationship_intel/opportunity_engine/models.py:51–56`, requires
 `Observation.confidence` to be a finite float in `[0, 1]`.
-`src/relationship_intel/cold_intake.py:38–53` likewise defines numeric
+`src/relationship_intel/cold_intake.py:36–50` likewise defines numeric
 `QualifiedLead.confidence`, but that is the later assessment boundary.
 
 The brief §2 requires confidence to be carried through C3b. The producer's
@@ -26,15 +27,52 @@ commercial qualification confidence; see `SCORING_CALIBRATION.md`.
 
 ## Required follow-up
 
-Existing tracked debt — owner: Mitch / #1261 and OE-01 pack workstream.
+PR-introduced blocker — owner: Mitch / #1261 and OE-01 pack workstream.
 Ratify a separate brief specifying whether C3 changes its output or C3b applies
 an explicit fetch-confidence mapping, including unknown/null handling and the
 separate assessment-confidence semantics. The round-2 brief §7 explicitly says
 to document a mismatch and stop; no producer, intake, schema, lifecycle or
 approval behavior is changed here.
 
-The pure mapper, mirrored C2–C4 fixtures, byte-hash guard, and scratch-database
-contract test remain blocked by that decision. This finding does not satisfy
-those acceptance criteria or close #1261. The canonical contract page and
-980labsOS producer tests belong to the companion repository pass. No live
-scraper, provider, or external request/response path was verified by this pass.
+Only the pure mapper and its successful row-mapping test remain blocked by
+that decision (acceptance criterion 4b). This PR does not close #1261 or claim
+merge readiness. No C3b rows or numeric fetch-confidence conversion are invented.
+
+## Independent contract coverage
+
+`tests/test_phase13a_contracts.py` hashes the local fixture bytes, loads C4 with
+the production `load_qualified_lead` / `QualifiedLead` consumer, checks shared
+person identity and evidence reference across C2/C3/C4, and runs the real
+`intake-lead` CLI twice on a scratch database. It checks pending review state,
+identity crosswalks, replay, and preservation of null optional metadata.
+
+All files below live in `tests/fixtures/phase13a/contracts/`:
+
+| Fixture | SHA-256 |
+| --- | --- |
+| `succession-enrichment-v0-input.json` | `e42c31f2293bfc43fc8089ded465175e0e74b153755888b4d134b295b9e921e2` |
+| `succession-enrichment-v0-output.json` | `2848bc0ee5965253ef4f96759aee8c9e300599f9e117d91a44eaa468be5db9c8` |
+| `qualified-lead-v0.json` | `6bae54567acc98c15ff4a173150f4b539fb3d47cf6763592dfbd64ff9413706e` |
+
+The C2 input and C3 output are verbatim Git blobs from 980labsOS commit
+`74d189a932f9c63e85ca0c270914e95bd0e75962`, under `tests/fixtures/phase13a/`.
+The existing three-person fixture includes one successful synthetic person,
+`person-fetchable`, plus failed and blocked cases. C4 follows that successful
+person. Its professional fields and 0.92 assessment confidence are authored
+synthetic test inputs, not an executed assessment or a live API response.
+Its shape is consumed by `cold_intake.py:36–50`; accepted wedge/lifecycle values
+come from `crm/twenty_adapter.py:127–129`. Optional fields remain null because
+this fixture does not assert an existing pack, draft, email, or title.
+
+`SHA256SUMS.json` pins the bytes for the local hash test. PR-introduced blocker —
+owner: 980labsOS #1261 companion builder: mirror these files and the hash manifest
+into the companion `contracts/` directory, add its local hash guard, and record
+these hashes in the canonical contract page. That directory was absent from the
+companion worktree at inspection; cross-repo completion is not claimed here.
+This is independent of the confidence mismatch.
+
+The canonical contract page, enrichment validation, and nine decision answers
+(criteria 1, 3, 5) belong to the 980labsOS companion pass under brief §2.
+No live scraper, provider, or external request/response path was verified by
+this offline pass. Planned future work — owner: #1261 integration workstream:
+verify real provider behavior before any live-capability claim.

@@ -1,0 +1,14 @@
+{
+  "intent": {
+    "source_key": "fixture:eos-cohort",
+    "source_revision_hash": "sha256:fixture-revision",
+    "pipeline_version": "succession-enrichment-v0",
+    "budget_ref": "budget:fixture-zero",
+    "person_ids": ["person-fetchable", "person-404", "person-blocked"]
+  },
+  "persons": [
+    {"id": "person-fetchable", "eos_profile_url": "https://public.example/profile"},
+    {"id": "person-404", "website": "https://missing.example/"},
+    {"id": "person-blocked", "linkedin_url": "https://www.linkedin.com/in/blocked"}
+  ]
+}
