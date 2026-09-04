@@ -184,7 +184,12 @@ def _home_url(
     return f"/{tail}{fragment}"
 
 
-_SYSTEM_PAYLOAD_KEYS = frozenset({"existing_crm_ref"})
+_SYSTEM_PAYLOAD_KEYS = frozenset({"existing_crm_ref", "proof_pointers", "wedge"})
+# System keys the reviewer must still be able to SEE. Approving a cold lead IS
+# the human gate on its wedge and proof pointers, so hiding them outright meant
+# approving blind. These render as static text — no `field`/`value__` inputs, so
+# nothing round-trips through `_payload_from_form` and flattens.
+_DISPLAY_ONLY_PAYLOAD_KEYS = frozenset({"proof_pointers", "wedge"})
 
 
 def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
@@ -195,10 +200,9 @@ def _handle_item(settings: Settings, form: dict[str, list[str]]) -> None:
         raise ValueError(f"Unsupported status: {status}")
     payload = _payload_from_form(form)
     repo = open_repo(settings)
-    # Preserve non-user-editable keys (like the gh #15 `existing_crm_ref`
-    # dict). If we let those round-trip through the form they get flattened
-    # to strings and later renders crash — see the AttributeError this
-    # commit is fixing.
+    # Preserve non-user-editable structured keys. If we let those round-trip
+    # through the form they get flattened to strings and later consumers or
+    # renders fail.
     prior = repo.review_item(object_type, local_id)
     if prior:
         for key in _SYSTEM_PAYLOAD_KEYS:
@@ -606,10 +610,12 @@ def _render_review_item(
 def _render_payload_fields(payload: dict, compact: bool = False) -> str:
     rows = []
     for key in _ordered_keys(payload):
-        # System keys (dict-shaped enrichment stashed by the pipeline) must
+        # System keys (structured enrichment stashed by the pipeline) must
         # never be rendered as editable text — they'd round-trip through
         # the form as strings and crash later renders.
         if key in _SYSTEM_PAYLOAD_KEYS:
+            if key in _DISPLAY_ONLY_PAYLOAD_KEYS:
+                rows.append(_render_static_field(key, payload[key], compact))
             continue
         value = payload[key]
         label = FIELD_LABELS.get(key, _human_label(key))
@@ -634,6 +640,20 @@ def _render_payload_fields(payload: dict, compact: bool = False) -> str:
                 f'value="{html.escape(value_text)}" {"readonly" if readonly else ""}></div>'
             )
     return "\n".join(rows)
+
+
+def _render_static_field(key: str, value, compact: bool = False) -> str:
+    """Show a system payload key without offering it back to the form."""
+    label = FIELD_LABELS.get(key, _human_label(key))
+    if isinstance(value, (list, tuple)):
+        text = ", ".join(str(item) for item in value)
+    else:
+        text = "" if value is None else str(value)
+    return (
+        f'<div class="field{" compact" if compact else ""}">'
+        f"<label>{html.escape(label)}</label>"
+        f'<p class="static-value">{html.escape(text) or "&mdash;"}</p></div>'
+    )
 
 
 def _ordered_keys(payload: dict) -> list[str]:
@@ -937,6 +957,14 @@ def _css() -> str:
     textarea {
       min-height: 104px;
       resize: vertical;
+    }
+    .static-value {
+      margin: 0;
+      padding: 8px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: #f6f8fb;
+      overflow-wrap: anywhere;
     }
     .wide { grid-column: 1 / -1; }
     .empty {

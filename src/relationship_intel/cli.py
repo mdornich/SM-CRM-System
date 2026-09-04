@@ -136,6 +136,13 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--folder-id", default=None)
     ingest.add_argument("--vault", default=None, type=Path)
 
+    intake_lead = sub.add_parser(
+        "intake-lead",
+        help="validate and queue a qualified cold-lead JSON record",
+        parents=[output_parent],
+    )
+    intake_lead.add_argument("record", type=Path)
+
     sync = sub.add_parser(
         "sync-crm", help="sync extracted records to the CRM", parents=[output_parent]
     )
@@ -317,6 +324,33 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"Ingested {stats['ingested']} transcript(s), "
                     f"skipped {stats['skipped_duplicates']} duplicate(s)"
+                )
+
+        elif args.command == "intake-lead":
+            from relationship_intel.cold_intake import intake_qualified_lead, load_qualified_lead
+
+            try:
+                # Intake is inside the guard too: it raises the same way when a
+                # record mixes ids that were previously intaken under two
+                # different people.
+                lead = load_qualified_lead(args.record)
+                result = intake_qualified_lead(pipeline.open_repo(settings), lead)
+            except (OSError, ValueError) as exc:
+                # The record is hand-authored JSON, so a bad wedge or a missing
+                # proof pointer is the expected failure here — report it rather
+                # than dumping a pydantic traceback. ValidationError subclasses
+                # ValueError, which also covers malformed JSON.
+                if args.json_output:
+                    _print_json({"error": "invalid_record", "message": str(exc)})
+                else:
+                    print(f"Invalid lead record {args.record}: {exc}", file=sys.stderr)
+                return 2
+            if args.json_output:
+                _print_json(result)
+            else:
+                print(
+                    f"Queued cold lead {lead.name} as person {result['person_id']} "
+                    f"(review item {result['review_item']})"
                 )
 
         elif args.command == "sync-crm":
