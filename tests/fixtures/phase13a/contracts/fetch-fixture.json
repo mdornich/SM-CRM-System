@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-04T12:00:00Z",
+  "persons": [
+    {
+      "id": "00000000-0000-4000-8000-000000000261",
+      "website": "https://firm.example/"
+    }
+  ],
+  "response": {
+    "body": "<p>Example Practice provides professional services.</p>",
+    "status": 200,
+    "url": "https://firm.example/"
+  }
+}
