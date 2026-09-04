@@ -13,6 +13,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # tests/test_review_gate_scripts.py drives the real scripts/*.sh, which are
+      # zsh. Ubuntu has no zsh by default, and those tests would silently SKIP
+      # rather than fail — coverage that only appears to exist.
+      - name: Install zsh (scripts/ are zsh scripts)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint

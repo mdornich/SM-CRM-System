@@ -107,9 +107,10 @@ either machine.
 
 **There is no `.env` on the mini and none should be created.** Secrets are
 rendered by the 980labsOS 8D Infisical Agent and injected for one child process
-by `with-8d-env.sh`; `load_settings()` uses python-dotenv's `load_dotenv()`,
-which never overrides values already present in the environment. `.env` is
-sourced only when the file exists (the MacBook dev path).
+by `with-8d-env.sh`. `scripts/_repo-env.sh` merges `.env` at the **lowest**
+precedence and only when the file exists, so on a dev machine that does have one
+the injected values still win — an unconditional shell-level load would clobber
+them before Python ever ran. `load_settings()` then reads `os.environ`.
 
 Run anything on the mini like this:
 
@@ -121,11 +122,24 @@ Run anything on the mini like this:
 The always-on review gate itself is
 `scripts/launchd/com.stablemischief.smcrm-reviewgate.plist` →
 `scripts/review-gate.sh` (re-execs through `with-8d-env.sh`, then serves
-`review-ui` on `127.0.0.1:8765`). Install on the mini with:
+`review-ui` on `127.0.0.1:8765`). It **refuses to start** (exit 78) when the
+wrapper is missing or `TWENTY_API_KEY` is empty, rather than coming up green
+backed by the mock CRM — an approval gate that gates nothing is worse than one
+that is down. It also creates its own log directory, because launchd creates the
+log file but not its parent.
+
+This plist **replaces `com.stablemischief.smcrm-reviewui.plist`**, removed in the
+same change. Both bound `127.0.0.1:8765`; with `KeepAlive` and a 10s
+`ThrottleInterval`, loading both leaves one crash-looping indefinitely. Unload
+the old one first:
 
 ```bash
+launchctl bootout gui/$(id -u)/com.stablemischief.smcrm-reviewui 2>/dev/null || true
+rm -f ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewui.plist
+
 cp scripts/launchd/com.stablemischief.smcrm-reviewgate.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewgate.plist
+launchctl list com.stablemischief.smcrm-reviewgate
 ```
 
 Logs land in `~/.980labsOS/smcrm/review-gate.{out,err}.log`. The job is

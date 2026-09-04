@@ -4,7 +4,7 @@ Two LaunchAgents wire the pipeline so you never touch the terminal:
 
 | Agent | Runs | Purpose |
 |---|---|---|
-| `com.stablemischief.smcrm-reviewui` | Continuously, from login | Serves the review UI at `http://127.0.0.1:8765/`. Restarts itself if it crashes. Bookmark the URL. |
+| `com.stablemischief.smcrm-reviewgate` | Continuously, from login | Serves the review UI at `http://127.0.0.1:8765/`. Restarts itself if it crashes. Bookmark the URL. Replaced `com.stablemischief.smcrm-reviewui` on 2026-09-03; both bound the same port, so only one may ever be loaded. |
 | `com.stablemischief.smcrm-daily` | Once a day at 05:00 | Runs ingest → review-queue (+ weekly-plan on Mondays). Fires a macOS notification when items are waiting for review, so you know without having to check. |
 
 The review UI is where James approves records — Approve triggers push-on-approve
@@ -53,11 +53,19 @@ RI_DB_PATH=/Users/<you>/.local/share/sm-crm-system/relationship_intel.db
 RI_MOCK_CRM_PATH=/Users/<you>/.local/share/sm-crm-system/mock_crm
 EOF
 
-# 5. Install and load the LaunchAgents.
-cp scripts/launchd/com.stablemischief.smcrm-reviewui.plist ~/Library/LaunchAgents/
-cp scripts/launchd/com.stablemischief.smcrm-daily.plist    ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewui.plist
-launchctl load ~/Library/LaunchAgents/com.stablemischief.smcrm-daily.plist
+# 5. Unload and remove the superseded review-UI agent if it is present.
+#    IT BINDS THE SAME 127.0.0.1:8765. Load both and the loser crash-loops on
+#    its ThrottleInterval forever, with nothing obvious to say why.
+launchctl bootout gui/$(id -u)/com.stablemischief.smcrm-reviewui 2>/dev/null || true
+rm -f ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewui.plist
+
+# 6. Install and load the LaunchAgents.
+#    NOTE: the reviewgate plist ships with Mac mini paths (/Users/980macmini/...).
+#    On any other host, edit the three path strings before loading it.
+cp scripts/launchd/com.stablemischief.smcrm-reviewgate.plist ~/Library/LaunchAgents/
+cp scripts/launchd/com.stablemischief.smcrm-daily.plist      ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewgate.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stablemischief.smcrm-daily.plist
 ```
 
 Open http://127.0.0.1:8765/ and bookmark it. Done — nothing else to type.
@@ -66,12 +74,17 @@ Open http://127.0.0.1:8765/ and bookmark it. Done — nothing else to type.
 
 ```bash
 launchctl list | grep smcrm
-# Expect a numeric PID (not `-`) next to smcrm-reviewui, and last exit code 0.
+# Expect a numeric PID (not `-`) next to smcrm-reviewgate, and last exit code 0.
+# Exit 78 means the gate refused to start rather than serve a mock-backed queue;
+# the reason is the first line of review-gate.err.log.
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/
 # Expect 200.
 ```
 
-Logs live at `output/logs/smcrm-{reviewui,daily}.stderr.log`.
+Daily logs live at `output/logs/smcrm-daily.stderr.log`; the review gate logs to
+`~/.980labsOS/smcrm/review-gate.{out,err}.log` (outside `~/Documents` so launchd
+can write them under TCC). `review-gate.sh` creates that directory itself —
+launchd creates the log file but not its parent.
 
 ## Manually fire the daily now (skip waiting for 05:00)
 
@@ -82,9 +95,9 @@ launchctl kickstart -k gui/$(id -u)/com.stablemischief.smcrm-daily
 ## Uninstall
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewui.plist
-launchctl unload ~/Library/LaunchAgents/com.stablemischief.smcrm-daily.plist
-rm ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewui.plist
+launchctl bootout gui/$(id -u)/com.stablemischief.smcrm-reviewgate
+launchctl bootout gui/$(id -u)/com.stablemischief.smcrm-daily
+rm ~/Library/LaunchAgents/com.stablemischief.smcrm-reviewgate.plist
 rm ~/Library/LaunchAgents/com.stablemischief.smcrm-daily.plist
 ```
 
