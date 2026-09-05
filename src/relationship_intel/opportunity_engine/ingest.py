@@ -31,6 +31,22 @@ def _key(kind: str, value: Any) -> str:
     return f"c3:{kind}:" + sha256(encoded.encode()).hexdigest()
 
 
+def _evidence_id(item: dict[str, Any]) -> str:
+    """Return the producer's own replay key after re-deriving it from the content.
+
+    The C3 contract (980labsOS phase-13a-brief-integration-contracts) defines
+    evidence identity as evidence:v1:sha256(source_ref\\ncontent_hash\\nmethod).
+    Minting a second, ingest-local identity for the same page would let the same
+    capture land twice under different IDs and collide on the schema's
+    UNIQUE(source_type, source_ref, content_hash, locator).
+    """
+    material = f"{item['source_ref']}\n{item['content_hash']}\n{item['method']}"
+    expected = "evidence:v1:" + sha256(material.encode()).hexdigest()
+    if item["idempotency_key"] != expected:
+        raise ValueError("evidence idempotency key does not match content identity")
+    return expected
+
+
 def _items(record: dict[str, Any]) -> list[dict[str, Any]]:
     if record.get("observations"):
         raise ValueError("nonempty observations[] require the verified #1281 wire contract")
@@ -74,7 +90,7 @@ def map_drop_file(
             raise ValueError("confidence must be high, medium, low, or unknown")
         locator = "page"
         source = Evidence(
-            id=_key("evidence", [source_type, item["source_ref"], item["content_hash"], locator]),
+            id=_evidence_id(item),
             source_type=source_type,
             source_ref=item["source_ref"],
             content_hash=item["content_hash"],
@@ -106,6 +122,7 @@ def ingest_drop_file(
 
     Blocked receipts are carried as a count; they are not evidence or stored in a
     new receipt table. Unresolved counts are per evidence item, not unique person.
+    Re-capturing unchanged content is idempotent; the first captured_at is kept.
     """
     with Path(path).open() as stream:
         record = json.load(stream)
@@ -131,11 +148,18 @@ def ingest_drop_file(
         for kind, proposals in (("evidence", evidence), ("observations", observations)):
             for proposal in proposals:
                 try:
-                    repo.get(type(proposal), proposal.id)
+                    prior = repo.get(type(proposal), proposal.id)
                 except KeyError:
                     state = "created"
                 else:
                     state = "existing"
+                    # Re-crawling an unchanged page yields the same content hash and
+                    # a fresh captured_at. That is a replay, not a new fact, so keep
+                    # the first-seen capture time; without this every routine re-run
+                    # raised an immutable ID conflict and aborted the whole file.
+                    # Any other difference (excerpt, occurred_at) still conflicts.
+                    if isinstance(proposal, Evidence):
+                        proposal = proposal.model_copy(update={"captured_at": prior.captured_at})
                 repo.put(proposal)
                 counts[f"{kind}_{state}"] += 1
     return counts

@@ -161,3 +161,43 @@ The CLI's generic `invalid_drop_file` response for immutable conflicts remains
 an acknowledged non-blocking usability limitation (**planned future work — owner:
 #1277 CLI workstream**). Error redaction and redundant validation are retained;
 no new operator error contract is introduced during this correction.
+
+## Review corrections (2026-09-05)
+
+Three defects found in review of PR #27 are fixed here; each has a regression
+test that fails without its fix.
+
+- **Evidence identity is the producer's `idempotency_key`.** The mapper minted a
+  second, ingest-local `c3:evidence:sha256([source_type, source_ref, content_hash,
+  locator])` identity and ignored the `idempotency_key` the deployed v0 producer
+  already emits. The C3 contract defines evidence identity as
+  `evidence:v1:sha256(source_ref\ncontent_hash\nmethod)`. Two identities for one
+  page meant the same capture could land twice under different primary keys and
+  then collide on `UNIQUE(source_type, source_ref, content_hash, locator)` — the
+  exact failure produced by ingesting a page through this command after the C3b
+  contract mapper wrote it. The mapper now re-derives the key from the record and
+  rejects any drop file whose key does not match its own content, so a forged or
+  stale replay key is never trusted. Covered by
+  `test_evidence_id_is_the_producer_replay_key` and
+  `test_forged_idempotency_key_is_rejected`.
+- **Re-capturing an unchanged page is a replay, not a conflict.** Evidence
+  identity excludes `captured_at`, but `OpportunityRepository.put` compares whole
+  records, so a routine re-crawl of unchanged content (same hash, fresh capture
+  time) raised `immutable ID conflict` and aborted the entire drop file. Only a
+  byte-identical replay of the same file succeeded, which no real producer run
+  emits. Ingestion now keeps the first-seen `captured_at` when identity and
+  content are unchanged. Excerpt and `occurred_at` differences still conflict, so
+  the AC4 finding above is unchanged. Covered by
+  `test_recapture_of_unchanged_page_is_a_replay`.
+- **Constraint violations are redacted like every other ingest failure.** The CLI
+  caught `OSError`/`ValueError`/`KeyError`/`TypeError` but not `sqlite3.Error`, so
+  a unique-constraint violation escaped as a traceback quoting the drop file's
+  URLs and identities — defeating the redaction the handler exists to provide.
+  Covered by `test_cli_redacts_constraint_violations`.
+
+**Existing tracked debt — owner: Mitch / #1277 and #1261 planners.** This branch
+maps `unknown` confidence to the `0.0` schema floor (§2, above); the C3b contract
+mapper in PR #28 preserves `null` and documents that the model rejects it. Both
+positions are ratified in their own briefs and neither is silently coerced, but
+one confidence policy has to win before ingestion and the contract mapper share a
+persistence path.

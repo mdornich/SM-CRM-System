@@ -24,6 +24,13 @@ from relationship_intel.store.repository import Repository
 FIXTURE = Path("tests/fixtures/phase13a/contracts/succession-enrichment-v0-output.json")
 
 
+def restamp(item):
+    """Recompute the producer's replay key the way the real v0 producer does."""
+    material = f"{item['source_ref']}\n{item['content_hash']}\n{item['method']}"
+    item["idempotency_key"] = "evidence:v1:" + sha256(material.encode()).hexdigest()
+    return item
+
+
 @pytest.fixture
 def record():
     return json.loads(FIXTURE.read_text())
@@ -100,6 +107,7 @@ def test_fixture_replay_changed_content_hash_and_legacy_unchanged(store, tmp_pat
     item = record["evidence"][0]
     item["excerpt"] = "Changed public evidence"
     item["content_hash"] = sha256(item["excerpt"].encode()).hexdigest()
+    restamp(item)
     third = ingest(repo, legacy, tmp_path, record)
     assert third["evidence_created"] == third["observations_created"] == 1
     assert (
@@ -130,6 +138,7 @@ def test_atomic_rollback_on_late_immutable_conflict(store, tmp_path, record):
     ingest(repo, legacy, tmp_path, record)
     original = copy.deepcopy(record["evidence"][0])
     record["evidence"][0]["source_ref"] = "https://new.example/"
+    restamp(record["evidence"][0])
     original["excerpt"] = "Conflicting excerpt under the same source hash"
     record["evidence"].append(original)
     with pytest.raises(ValueError, match="immutable ID conflict"):
@@ -183,13 +192,15 @@ def test_ingest_fit_sources_exposes_pack_contract_blocker(store, tmp_path, recor
     assert SuccessionColdPack().assess(original_obs).classification == "fit"
     template = record["evidence"][0]
     record["evidence"] = [
-        dict(
-            template,
-            source_type=kind,
-            source_ref=source["source_ref"],
-            content_hash=source["content_hash"],
-            excerpt=source["excerpt"],
-            captured_at=source["captured_at"],
+        restamp(
+            dict(
+                template,
+                source_type=kind,
+                source_ref=source["source_ref"],
+                content_hash=source["content_hash"],
+                excerpt=source["excerpt"],
+                captured_at=source["captured_at"],
+            )
         )
         for source, kind in zip(fit["evidence"], ["eos_profile", "firm_website"], strict=True)
     ]
@@ -239,3 +250,52 @@ def test_excerpt_only_change_preserves_original_and_rejects_conflict(store, tmp_
         ingest(repo, legacy, tmp_path, record)
     for table, rows in before.items():
         assert [tuple(row) for row in repo.conn.execute(f"SELECT * FROM {table}")] == rows
+
+
+def test_evidence_id_is_the_producer_replay_key(record):
+    """One page has one identity here and in the C3 contract, not two.
+
+    A second ingest-local identity would let the same capture land twice under
+    different IDs and then collide on the schema's unique source tuple.
+    """
+    item = record["evidence"][0]
+    evidence, _ = map_drop_file(record, {"person-fetchable": (1, None)})
+    assert evidence[0].id == item["idempotency_key"]
+    assert item["idempotency_key"] == restamp(dict(item))["idempotency_key"]
+
+
+@pytest.mark.parametrize("field", ["source_ref", "content_hash", "method", "idempotency_key"])
+def test_forged_idempotency_key_is_rejected(record, field):
+    """A replay key that does not re-derive from the content is never trusted."""
+    record["evidence"][0][field] = "0" * 64 if field == "content_hash" else f"tampered-{field}"
+    with pytest.raises(ValueError, match="idempotency key"):
+        map_drop_file(record, {"person-fetchable": (1, None)})
+
+
+def test_recapture_of_unchanged_page_is_a_replay(store, tmp_path, record):
+    """A later crawl of identical content must not abort the drop file."""
+    repo, legacy, _ = store
+    ingest(repo, legacy, tmp_path, record)
+    first_capture = repo.conn.execute("SELECT captured_at FROM oe_evidence").fetchone()[0]
+    record["evidence"][0]["captured_at"] = "2026-12-25T09:30:00Z"
+    counts = ingest(repo, legacy, tmp_path, record)
+    assert counts["evidence_existing"] == counts["observations_existing"] == 1
+    assert counts["evidence_created"] == counts["observations_created"] == 0
+    rows = repo.conn.execute("SELECT captured_at FROM oe_evidence").fetchall()
+    assert [row[0] for row in rows] == [first_capture]
+
+
+def test_cli_redacts_constraint_violations(store, tmp_path, monkeypatch, capsys, record):
+    """A UNIQUE-tuple collision must not leak the drop file through a traceback."""
+    repo, _, _ = store
+    twin = restamp(dict(record["evidence"][0], method="authenticated_http_get"))
+    record["evidence"].append(twin)
+    path = tmp_path / "drop.json"
+    path.write_text(json.dumps(record))
+    monkeypatch.setenv("RI_DB_PATH", repo.conn.execute("PRAGMA database_list").fetchone()[2])
+    with pytest.raises(sqlite3.IntegrityError):
+        ingest_drop_file(repo, path, lambda key: (1, None))
+    assert main(["ingest-evidence", str(path), "--json"]) == 2
+    output = capsys.readouterr().out
+    assert json.loads(output) == {"error": "invalid_drop_file"}
+    assert "person-fetchable" not in output and "https://" not in output

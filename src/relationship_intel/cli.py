@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sqlite3
 import sys
 from dataclasses import asdict, is_dataclass
 from datetime import date
@@ -345,8 +346,10 @@ def main(argv: list[str] | None = None) -> int:
                     args.record,
                     lambda external_id: resolve_twenty_subject(legacy, external_id),
                 )
-            except (OSError, ValueError, KeyError, TypeError):
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
                 # Drop files contain source text and identities; diagnostics must not echo them.
+                # sqlite3.Error is included so a constraint violation cannot escape as a
+                # traceback quoting the drop file's URLs and identities.
                 if args.json_output:
                     _print_json({"error": "invalid_drop_file"})
                 else:
