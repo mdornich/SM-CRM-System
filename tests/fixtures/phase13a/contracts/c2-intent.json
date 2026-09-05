@@ -1,0 +1,9 @@
+{
+  "budget_ref": "fixture:zero-spend",
+  "person_ids": [
+    "00000000-0000-4000-8000-000000000261"
+  ],
+  "pipeline_version": "succession-enrichment-v0",
+  "source_key": "fixture:1261:synthetic-person",
+  "source_revision_hash": "34eec3069f2be2329cd0c6538c9ec77059ec9641db1ee289a3e298630d0cbe48"
+}

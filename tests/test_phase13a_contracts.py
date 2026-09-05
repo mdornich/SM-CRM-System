@@ -22,6 +22,11 @@ def test_fixture_byte_hashes():
         "succession-enrichment-v0-input.json",
         "succession-enrichment-v0-output.json",
         "qualified-lead-v0.json",
+        "c2-intent.json",
+        "fetch-fixture.json",
+        "c3-output.json",
+        "c3b-proposal.json",
+        "c4-qualified-lead.json",
     }
     for name, digest in expected.items():
         assert hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest() == digest, name
